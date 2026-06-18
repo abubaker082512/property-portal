@@ -34,7 +34,15 @@ const setStorage = <T>(key: string, data: T): void => {
 };
 
 // Initial Seed Data for Demo Mode
+const SEED_VERSION = 'v2'; // bump to force-reset all local demo data
 const initDemoData = () => {
+  if (localStorage.getItem('prop_portal_seed_version') !== SEED_VERSION) {
+    [MOCK_PROFILES_KEY, MOCK_OWNERS_KEY, MOCK_PROPERTIES_KEY,
+     MOCK_BOOKINGS_KEY, MOCK_TRANSACTIONS_KEY, MOCK_CURRENT_USER_KEY
+    ].forEach(k => localStorage.removeItem(k));
+    localStorage.setItem('prop_portal_seed_version', SEED_VERSION);
+  }
+
   // 1. Initial Profiles
   if (!localStorage.getItem(MOCK_PROFILES_KEY)) {
     const profiles: Profile[] = [
@@ -73,13 +81,17 @@ const initDemoData = () => {
         currency: 'USD',
         price_per_night: 450,
         commission_type: 'percentage',
-        commission_value: 15, // 15% commission
+        commission_value: 15,
         property_type: 'villa',
         bedrooms: 4,
         bathrooms: 4,
         max_guests: 8,
-        amenities: ['Pool', 'Beach View', 'WiFi', 'Air Conditioning', 'Kitchen', 'Hot Tub', 'BBQ Grill'],
-        images: ['https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=1200&q=80', 'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=800&q=80'],
+        amenities: ['Pool', 'Beach View', 'WiFi', 'Air Conditioning', 'Kitchen', 'Hot Tub'],
+        images: [
+          'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=800&q=80',
+          'https://images.unsplash.com/photo-1583608205776-bfd35f0d9f83?auto=format&fit=crop&w=800&q=80',
+        ],
         status: 'listed',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -97,13 +109,16 @@ const initDemoData = () => {
         currency: 'USD',
         price_per_night: 220,
         commission_type: 'fixed',
-        commission_value: 30, // $30 fixed fee per night
+        commission_value: 30,
         property_type: 'apartment',
         bedrooms: 1,
         bathrooms: 1.5,
         max_guests: 2,
-        amenities: ['WiFi', 'Gym', 'Air Conditioning', 'Elevator', 'City View', 'Concierge'],
-        images: ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1200&q=80'],
+        amenities: ['WiFi', 'Gym', 'Air Conditioning', 'Elevator'],
+        images: [
+          'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=80',
+        ],
         status: 'listed',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -121,13 +136,16 @@ const initDemoData = () => {
         currency: 'USD',
         price_per_night: 180,
         commission_type: 'percentage',
-        commission_value: 10, // 10% commission
+        commission_value: 10,
         property_type: 'cabin',
         bedrooms: 2,
         bathrooms: 1,
         max_guests: 4,
-        amenities: ['Fireplace', 'Hot Tub', 'WiFi', 'Ski In/Out', 'Parking', 'Pet Friendly'],
-        images: ['https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=1200&q=80'],
+        amenities: ['Fireplace', 'Hot Tub', 'WiFi', 'Parking', 'Pet Friendly'],
+        images: [
+          'https://images.unsplash.com/photo-1518780664697-55e3ad937233?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1542718610-a1d656d1884c?auto=format&fit=crop&w=800&q=80',
+        ],
         status: 'listed',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -145,13 +163,16 @@ const initDemoData = () => {
         currency: 'EUR',
         price_per_night: 290,
         commission_type: 'percentage',
-        commission_value: 12, // 12% commission
+        commission_value: 12,
         property_type: 'apartment',
         bedrooms: 2,
         bathrooms: 2,
         max_guests: 4,
-        amenities: ['WiFi', 'Balcony', 'Washing Machine', 'Espresso Machine', 'Heating'],
-        images: ['https://images.unsplash.com/photo-1499955085172-a104c9463ece?auto=format&fit=crop&w=1200&q=80'],
+        amenities: ['WiFi', 'Balcony', 'Kitchen', 'Heating'],
+        images: [
+          'https://images.unsplash.com/photo-1499955085172-a104c9463ece?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1550340499-a6c60fc8287c?auto=format&fit=crop&w=800&q=80',
+        ],
         status: 'listed',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -160,7 +181,7 @@ const initDemoData = () => {
         id: 'p-5',
         owner_id: 'o-2',
         title: 'Exclusive Palm Jumeirah Estate',
-        description: 'Ultra-luxurious resort estate located on the Palm. Private infinity beach, indoor cinema, custom wellness spa, 24/7 private chef and butler.',
+        description: 'Ultra-luxurious resort estate on the Palm. Private infinity beach, indoor cinema, custom wellness spa, 24/7 private chef and butler.',
         address: 'Frond D, Palm Jumeirah',
         city: 'Dubai',
         state: 'Dubai',
@@ -169,13 +190,101 @@ const initDemoData = () => {
         currency: 'AED',
         price_per_night: 1800,
         commission_type: 'fixed',
-        commission_value: 200, // 200 AED fixed per night
+        commission_value: 200,
         property_type: 'villa',
         bedrooms: 5,
         bathrooms: 6,
         max_guests: 10,
-        amenities: ['Pool', 'Private Beach', 'Cinema Room', 'WiFi', 'Air Conditioning', 'Private Chef', 'Spa'],
-        images: ['https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80'],
+        amenities: ['Pool', 'Beach View', 'WiFi', 'Air Conditioning', 'Kitchen', 'Hot Tub'],
+        images: [
+          'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=800&q=80',
+          'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
+        ],
+        status: 'listed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      // ── PKR Properties – Pakistan ──
+      {
+        id: 'p-6',
+        owner_id: 'o-1',
+        title: 'DHA Phase 6 Modern Villa',
+        description: 'Stunning 5-bedroom modern villa in the heart of DHA Phase 6 Lahore. Features a private rooftop terrace, lush garden, home cinema, and 24/7 security with generator backup.',
+        address: 'Street 12, Block M, DHA Phase 6',
+        city: 'Lahore',
+        state: 'Punjab',
+        country: 'Pakistan',
+        zip_code: '54000',
+        currency: 'PKR',
+        price_per_night: 35000,
+        commission_type: 'percentage',
+        commission_value: 10,
+        property_type: 'villa',
+        bedrooms: 5,
+        bathrooms: 5,
+        max_guests: 10,
+        amenities: ['WiFi', 'Air Conditioning', 'Parking', 'Kitchen', 'Gym', 'Pet Friendly'],
+        images: [
+          'https://images.unsplash.com/photo-1600607688969-a5bfcd646154?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1600047509807-ba8f99d2cdde?auto=format&fit=crop&w=800&q=80',
+          'https://images.unsplash.com/photo-1600566753151-384129cf4d3a?auto=format&fit=crop&w=800&q=80',
+        ],
+        status: 'listed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: 'p-7',
+        owner_id: 'o-2',
+        title: 'Clifton Sea-View Apartment',
+        description: 'Elegant 3-bedroom apartment on the 12th floor with panoramic views of the Arabian Sea. Fully furnished with contemporary décor, backup power, and building amenities.',
+        address: 'Block 2, Clifton',
+        city: 'Karachi',
+        state: 'Sindh',
+        country: 'Pakistan',
+        zip_code: '75600',
+        currency: 'PKR',
+        price_per_night: 22000,
+        commission_type: 'fixed',
+        commission_value: 2500,
+        property_type: 'apartment',
+        bedrooms: 3,
+        bathrooms: 3,
+        max_guests: 6,
+        amenities: ['WiFi', 'Air Conditioning', 'Elevator', 'Parking', 'Beach View', 'Kitchen'],
+        images: [
+          'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1493809842364-78817add7ffb?auto=format&fit=crop&w=800&q=80',
+        ],
+        status: 'listed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: 'p-8',
+        owner_id: 'o-1',
+        title: 'Nathiagali Pine Forest Cottage',
+        description: 'Rustic yet comfortable 4-bedroom hill-station cottage surrounded by towering pine forests. Cozy fireplaces, breathtaking mountain views, and an outdoor BBQ area perfect for families.',
+        address: 'Near Dunga Gali Road',
+        city: 'Nathiagali',
+        state: 'KPK',
+        country: 'Pakistan',
+        zip_code: '22020',
+        currency: 'PKR',
+        price_per_night: 18000,
+        commission_type: 'percentage',
+        commission_value: 8,
+        property_type: 'cottage',
+        bedrooms: 4,
+        bathrooms: 2,
+        max_guests: 8,
+        amenities: ['Fireplace', 'Parking', 'Kitchen', 'Pet Friendly', 'Balcony'],
+        images: [
+          'https://images.unsplash.com/photo-1452784444945-3f422708fe5e?auto=format&fit=crop&w=1200&q=80',
+          'https://images.unsplash.com/photo-1510798831971-661eb04b3739?auto=format&fit=crop&w=800&q=80',
+          'https://images.unsplash.com/photo-1416949929422-a1d9c8fe84af?auto=format&fit=crop&w=800&q=80',
+        ],
         status: 'listed',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()

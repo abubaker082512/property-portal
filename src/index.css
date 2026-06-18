@@ -689,3 +689,103 @@ h1, h2, h3, h4, h5, h6 {
   height: 2px;
   background-color: var(--primary);
 }
+
+/* ─── Guest Portal ─── */
+.guest-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Mode toggle pill */
+.mode-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  display: flex;
+  gap: 0.25rem;
+  background: rgba(255,255,255,0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-full);
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+/* Property card hover */
+.property-card-guest {
+  cursor: pointer;
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
+}
+.property-card-guest:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+}
+
+/* Booking date input fix */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+/* Auth tabs */
+.auth-tab-active {
+  background: var(--bg-card);
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Step progress bar animation */
+@keyframes progressFill {
+  from { width: 0; }
+  to   { width: 100%; }
+}
+
+/* Amenity chip */
+.amenity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-full);
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+/* Dark mode overrides for guest portal */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light-mode) .mode-toggle {
+    background: rgba(30,35,50,0.9);
+  }
+}
+
+/* Responsive – guest property grid */
+@media (max-width: 1024px) {
+  .grid.grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .grid.grid-3 {
+    grid-template-columns: 1fr;
+  }
+  .grid.grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .modal-content {
+    max-width: 100% !important;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    margin-top: auto;
+  }
+  .modal-overlay {
+    align-items: flex-end;
+  }
+}

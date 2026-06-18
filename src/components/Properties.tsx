@@ -4,7 +4,7 @@ import { api } from '../lib/supabase';
 import type { Property, PropertyStatus, PropertyType, CommissionType, PropertyOwner } from '../types';
 import { 
   Building, Plus, Edit2, Trash2, X, Check, 
-  MapPin
+  MapPin, ChevronLeft, ChevronRight, Images
 } from 'lucide-react';
 
 const AMENITIES_LIST = [
@@ -12,6 +12,40 @@ const AMENITIES_LIST = [
   'Kitchen', 'Fireplace', 'Gym', 'Parking', 
   'Beach View', 'Pet Friendly', 'Balcony', 'Elevator'
 ];
+
+// Small image carousel for property cards
+const ImageCarousel: React.FC<{ images: string[]; title: string; status: string; propertyType: string }> = ({ images, title, status, propertyType }) => {
+  const [cur, setCur] = useState(0);
+  return (
+    <div style={{ position: 'relative', height: '180px', width: '100%', overflow: 'hidden' }}>
+      <img src={images[cur]} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'opacity 0.3s' }} />
+      <span className={`badge ${status === 'listed' ? 'badge-success' : status === 'maintenance' ? 'badge-warning' : 'badge-secondary'}`}
+        style={{ position: 'absolute', top: '12px', right: '12px', boxShadow: 'var(--shadow-sm)' }}>
+        {status}
+      </span>
+      <div style={{ position: 'absolute', bottom: '12px', left: '12px', backgroundColor: 'rgba(0,0,0,0.6)', color: 'white', padding: '0.25rem 0.625rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem', backdropFilter: 'blur(4px)', fontWeight: 600 }}>
+        {propertyType.toUpperCase()}
+      </div>
+      {images.length > 1 && (
+        <>
+          <button onClick={e => { e.stopPropagation(); setCur(i => (i - 1 + images.length) % images.length); }}
+            style={{ position: 'absolute', left: '6px', top: '50%', transform: 'translateY(-50%)', width: '26px', height: '26px', borderRadius: '50%', background: 'rgba(0,0,0,0.45)', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ChevronLeft size={14} />
+          </button>
+          <button onClick={e => { e.stopPropagation(); setCur(i => (i + 1) % images.length); }}
+            style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', width: '26px', height: '26px', borderRadius: '50%', background: 'rgba(0,0,0,0.45)', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ChevronRight size={14} />
+          </button>
+          <div style={{ position: 'absolute', bottom: '8px', right: '12px', display: 'flex', gap: '4px' }}>
+            {images.map((_, i) => (
+              <div key={i} style={{ width: '5px', height: '5px', borderRadius: '50%', background: i === cur ? 'white' : 'rgba(255,255,255,0.5)' }} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 export const Properties: React.FC = () => {
   const { user } = useAuth();
@@ -42,7 +76,7 @@ export const Properties: React.FC = () => {
   const [maxGuests, setMaxGuests] = useState('2');
   const [status, setStatus] = useState<PropertyStatus>('listed');
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
-  const [imageUrl, setImageUrl] = useState('');
+  const [imageUrls, setImageUrls] = useState<string[]>(['']);
   const [ownerId, setOwnerId] = useState('');
   
   const [formError, setFormError] = useState('');
@@ -93,7 +127,7 @@ export const Properties: React.FC = () => {
     setMaxGuests('2');
     setStatus('listed');
     setSelectedAmenities([]);
-    setImageUrl('');
+    setImageUrls(['']);
     setFormError('');
     
     // Auto-select owner if current user is owner
@@ -127,11 +161,15 @@ export const Properties: React.FC = () => {
     setMaxGuests(prop.max_guests.toString());
     setStatus(prop.status);
     setSelectedAmenities(prop.amenities);
-    setImageUrl(prop.images && prop.images.length > 0 ? prop.images[0] : '');
+    setImageUrls(prop.images && prop.images.length > 0 ? prop.images : ['']);
     setOwnerId(prop.owner_id);
     setFormError('');
     setModalOpen(true);
   };
+
+  const addImageField = () => setImageUrls(prev => [...prev, '']);
+  const removeImageField = (i: number) => setImageUrls(prev => prev.filter((_, idx) => idx !== i));
+  const updateImageUrl = (i: number, val: string) => setImageUrls(prev => prev.map((u, idx) => idx === i ? val : u));
 
   const closeFormModal = () => {
     setModalOpen(false);
@@ -199,7 +237,9 @@ export const Properties: React.FC = () => {
       bathrooms: parseFloat(bathrooms),
       max_guests: parseInt(maxGuests),
       amenities: selectedAmenities,
-      images: imageUrl.trim() ? [imageUrl.trim()] : ['https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80'],
+      images: imageUrls.filter(u => u.trim()).length > 0
+        ? imageUrls.filter(u => u.trim())
+        : ['https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80'],
       status
     };
 
@@ -245,42 +285,13 @@ export const Properties: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-3 gap-6">
-          {properties.map(p => (
+          {properties.map(p => {
+            const images = p.images && p.images.length > 0 ? p.images : ['https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=800&q=80'];
+            return (
             <div key={p.id} className="card flex flex-col" style={{ padding: 0, overflow: 'hidden', height: '100%' }}>
-              {/* Header Image */}
-              <div style={{ position: 'relative', height: '180px', width: '100%' }}>
-                <img 
-                  src={p.images && p.images.length > 0 ? p.images[0] : 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=800&q=80'} 
-                  alt={p.title}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                />
-                <span 
-                  className={`badge ${
-                    p.status === 'listed' ? 'badge-success' : 
-                    p.status === 'maintenance' ? 'badge-warning' : 'badge-secondary'
-                  }`}
-                  style={{ position: 'absolute', top: '12px', right: '12px', boxShadow: 'var(--shadow-sm)' }}
-                >
-                  {p.status}
-                </span>
+              {/* Header Image with gallery dots */}
+              <ImageCarousel images={images} title={p.title} status={p.status} propertyType={p.property_type} />
 
-                <div 
-                  style={{
-                    position: 'absolute',
-                    bottom: '12px',
-                    left: '12px',
-                    backgroundColor: 'rgba(0,0,0,0.6)',
-                    color: 'white',
-                    padding: '0.25rem 0.625rem',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.75rem',
-                    backdropFilter: 'blur(4px)',
-                    fontWeight: 600
-                  }}
-                >
-                  {p.property_type.toUpperCase()}
-                </div>
-              </div>
 
               {/* Card Contents */}
               <div className="p-4 flex flex-col" style={{ flexGrow: 1 }}>
@@ -366,7 +377,8 @@ export const Properties: React.FC = () => {
                 </div>
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
 
@@ -530,10 +542,12 @@ export const Properties: React.FC = () => {
                       value={currency}
                       onChange={e => setCurrency(e.target.value)}
                     >
-                      <option value="USD">USD ($)</option>
-                      <option value="EUR">EUR (€)</option>
-                      <option value="AED">AED (د.إ)</option>
-                      <option value="INR">INR (₹)</option>
+                      <option value="PKR">PKR (₨) – Pakistani Rupee</option>
+                      <option value="USD">USD ($) – US Dollar</option>
+                      <option value="EUR">EUR (€) – Euro</option>
+                      <option value="AED">AED (د.إ) – UAE Dirham</option>
+                      <option value="GBP">GBP (£) – British Pound</option>
+                      <option value="INR">INR (₹) – Indian Rupee</option>
                     </select>
                   </div>
 
@@ -633,16 +647,38 @@ export const Properties: React.FC = () => {
                 </div>
               </div>
 
-              {/* Image URL */}
+              {/* Multiple Image URLs */}
               <div className="form-group">
-                <label className="form-label">Cover Image URL</label>
-                <input 
-                  type="url" 
-                  className="form-control"
-                  placeholder="https://images.unsplash.com/... or leave blank for a default"
-                  value={imageUrl} 
-                  onChange={e => setImageUrl(e.target.value)}
-                />
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Images size={14} /> Property Photos (multiple URLs supported)
+                </label>
+                <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Paste direct image URLs (Unsplash, Cloudinary, etc.). First image is the cover photo.</p>
+                {imageUrls.map((url, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="url"
+                      className="form-control"
+                      style={{ marginBottom: 0 }}
+                      placeholder={i === 0 ? 'Cover image URL (required for display)' : `Photo ${i + 1} URL`}
+                      value={url}
+                      onChange={e => updateImageUrl(i, e.target.value)}
+                    />
+                    {imageUrls.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeImageField(i)}
+                        style={{ background: 'none', border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: '6px', padding: '0.4rem 0.5rem', cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {imageUrls.length < 8 && (
+                  <button type="button" onClick={addImageField} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem', marginTop: '0.25rem' }}>
+                    <Plus size={12} /> Add Another Photo
+                  </button>
+                )}
               </div>
 
               {/* Amenities checkboxes */}
