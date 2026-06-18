@@ -10,55 +10,17 @@ import { StaffManagement } from './components/StaffManagement';
 import { GuestPortal } from './components/GuestPortal';
 import { Home, Briefcase, LogOut } from 'lucide-react';
 
-// Top-level mode switcher for guest vs portal
-const AppModeToggle: React.FC<{ mode: 'guest' | 'portal'; onSwitch: (m: 'guest' | 'portal') => void }> = ({ mode, onSwitch }) => (
-  <div style={{
-    position: 'fixed',
-    top: '1rem',
-    right: '1rem',
-    zIndex: 1000,
-    display: 'flex',
-    gap: '0.5rem',
-    background: 'rgba(255,255,255,0.85)',
-    backdropFilter: 'blur(10px)',
-    borderRadius: 'var(--radius-full)',
-    padding: '0.25rem',
-    border: '1px solid var(--border)',
-    boxShadow: 'var(--shadow-md)'
-  }}>
-    <button
-      onClick={() => onSwitch('guest')}
-      style={{
-        display: 'flex', alignItems: 'center', gap: '5px',
-        padding: '0.4rem 0.875rem', borderRadius: 'var(--radius-full)', border: 'none',
-        fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
-        background: mode === 'guest' ? 'var(--primary)' : 'transparent',
-        color: mode === 'guest' ? 'white' : 'var(--text-secondary)',
-        transition: 'all var(--transition-fast)'
-      }}
-    >
-      <Home size={13} /> Browse
-    </button>
-    <button
-      onClick={() => onSwitch('portal')}
-      style={{
-        display: 'flex', alignItems: 'center', gap: '5px',
-        padding: '0.4rem 0.875rem', borderRadius: 'var(--radius-full)', border: 'none',
-        fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
-        background: mode === 'portal' ? 'var(--primary)' : 'transparent',
-        color: mode === 'portal' ? 'white' : 'var(--text-secondary)',
-        transition: 'all var(--transition-fast)'
-      }}
-    >
-      <Briefcase size={13} /> Staff Portal
-    </button>
-  </div>
-);
-
 const GuestPortalWrapper: React.FC<{ onSwitchToPortal: () => void }> = ({ onSwitchToPortal }) => {
   const { user, logout } = useAuth();
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-app)' }}>
+    <div style={{ 
+      minHeight: '100vh', 
+      backgroundColor: 'var(--bg-app)', 
+      width: '100%', 
+      display: 'flex', 
+      flexDirection: 'column',
+      flex: '1 0 auto'
+    }}>
       {/* Guest Header */}
       <header style={{
         backgroundColor: 'var(--bg-card)',
@@ -80,17 +42,29 @@ const GuestPortalWrapper: React.FC<{ onSwitchToPortal: () => void }> = ({ onSwit
           <span style={{ fontSize: '0.7rem', backgroundColor: 'var(--success-light)', color: 'var(--success)', padding: '2px 8px', borderRadius: '999px', fontWeight: 600 }}>Guest</span>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <button className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.4rem 0.875rem' }} onClick={onSwitchToPortal}>
-            <Briefcase size={13} /> Staff Login
-          </button>
-          {user && (
-            <button className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.4rem 0.875rem', color: 'var(--danger)' }} onClick={logout}>
-              <LogOut size={13} /> Logout
+          {!user ? (
+            <button className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.4rem 0.875rem' }} onClick={onSwitchToPortal}>
+              <Briefcase size={13} /> Staff Login / Sign In
             </button>
+          ) : (
+            <>
+              {user.role !== 'customer' && (
+                <button className="btn btn-primary" style={{ fontSize: '0.78rem', padding: '0.4rem 0.875rem' }} onClick={onSwitchToPortal}>
+                  <Briefcase size={13} /> Go to Portal
+                </button>
+              )}
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>Welcome, <strong>{user.full_name}</strong></span>
+                <span className="badge badge-info" style={{ fontSize: '0.65rem', textTransform: 'capitalize' }}>{user.role}</span>
+              </div>
+              <button className="btn btn-secondary" style={{ fontSize: '0.78rem', padding: '0.4rem 0.875rem', color: 'var(--danger)' }} onClick={logout}>
+                <LogOut size={13} /> Logout
+              </button>
+            </>
           )}
         </div>
       </header>
-      <div style={{ maxWidth: '1300px', margin: '0 auto', padding: '1.5rem 1rem 4rem' }}>
+      <div style={{ maxWidth: '1300px', width: '100%', margin: '0 auto', padding: '1.5rem 1rem 4rem', flex: 1 }}>
         <GuestPortal />
       </div>
     </div>
@@ -102,11 +76,16 @@ const PortalContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [appMode, setAppMode] = useState<'guest' | 'portal'>('guest');
 
-  // Allow Login page to switch back to guest mode
+  // Handle mode switches via custom events
   useEffect(() => {
-    const handler = () => setAppMode('guest');
-    window.addEventListener('switch-to-guest', handler);
-    return () => window.removeEventListener('switch-to-guest', handler);
+    const toGuest = () => setAppMode('guest');
+    const toPortal = () => setAppMode('portal');
+    window.addEventListener('switch-to-guest', toGuest);
+    window.addEventListener('switch-to-portal', toPortal);
+    return () => {
+      window.removeEventListener('switch-to-guest', toGuest);
+      window.removeEventListener('switch-to-portal', toPortal);
+    };
   }, []);
 
   if (loading) {
@@ -138,24 +117,14 @@ const PortalContent: React.FC = () => {
     );
   }
 
-  // Always allow guest browsing regardless of auth
+  // Guest view mode
   if (appMode === 'guest') {
-    return (
-      <>
-        <AppModeToggle mode="guest" onSwitch={setAppMode} />
-        <GuestPortalWrapper onSwitchToPortal={() => setAppMode('portal')} />
-      </>
-    );
+    return <GuestPortalWrapper onSwitchToPortal={() => setAppMode('portal')} />;
   }
 
   // Staff/Admin Portal requires login
   if (!user) {
-    return (
-      <>
-        <AppModeToggle mode="portal" onSwitch={setAppMode} />
-        <Login />
-      </>
-    );
+    return <Login />;
   }
 
   // Render proper subpage depending on active tab
@@ -177,12 +146,9 @@ const PortalContent: React.FC = () => {
   };
 
   return (
-    <>
-      <AppModeToggle mode="portal" onSwitch={setAppMode} />
-      <PortalShell activeTab={activeTab} setActiveTab={setActiveTab}>
-        {renderTabContent()}
-      </PortalShell>
-    </>
+    <PortalShell activeTab={activeTab} setActiveTab={setActiveTab}>
+      {renderTabContent()}
+    </PortalShell>
   );
 };
 

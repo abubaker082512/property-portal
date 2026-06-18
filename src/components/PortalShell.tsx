@@ -4,7 +4,7 @@ import type { Profile } from '../types';
 import { api } from '../lib/supabase';
 import { 
   LayoutDashboard, Calendar, Building, Users, 
-  Receipt, LogOut, Sun, Moon, RefreshCw, ChevronDown
+  Receipt, LogOut, Sun, Moon, RefreshCw, ChevronDown, Home
 } from 'lucide-react';
 
 interface PortalShellProps {
@@ -49,6 +49,7 @@ export const PortalShell: React.FC<PortalShellProps> = ({
   // Define sidebar items based on roles
   const getMenuItems = () => {
     const items = [
+      { id: 'browse', label: 'View Guest Site', icon: <Home size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
       { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
       { id: 'scheduler', label: 'Booking Scheduler', icon: <Calendar size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
       { id: 'bookings', label: 'Bookings List', icon: <Receipt size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
@@ -85,7 +86,13 @@ export const PortalShell: React.FC<PortalShellProps> = ({
             <li key={item.id}>
               <button 
                 className={`sidebar-item-btn ${activeTab === item.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  if (item.id === 'browse') {
+                    window.dispatchEvent(new CustomEvent('switch-to-guest'));
+                  } else {
+                    setActiveTab(item.id);
+                  }
+                }}
               >
                 {item.icon}
                 <span>{item.label}</span>
