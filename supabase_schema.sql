@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     full_name TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('admin', 'sales', 'support', 'owner', 'customer')),
+    role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('super_admin', 'admin', 'sales', 'support', 'owner', 'customer')),
     phone TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -170,10 +170,15 @@ CREATE TRIGGER booking_overlap_trigger
 CREATE OR REPLACE FUNCTION public.is_staff_or_admin()
 RETURNS BOOLEAN AS $$
 BEGIN
+    -- RLS recursion guard: guest/not-logged-in users cannot be staff/admin
+    IF auth.uid() IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
     RETURN EXISTS (
         SELECT 1 FROM public.profiles
         WHERE id = auth.uid()
-          AND role IN ('admin', 'sales', 'support')
+          AND role IN ('super_admin', 'admin', 'sales', 'support')
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -187,12 +192,12 @@ CREATE POLICY "Allow users to update their own profiles"
     ON public.profiles FOR UPDATE
     USING (auth.uid() = id);
 
-CREATE POLICY "Allow admin to insert/update profiles (for staff creation)"
+CREATE POLICY "Allow admin/super_admin to manage profiles"
     ON public.profiles FOR ALL
     USING (
         EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND role = 'admin'
+            WHERE id = auth.uid() AND role IN ('admin', 'super_admin')
         )
     );
 
