@@ -121,6 +121,22 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
+-- A2. Sync profile role back to auth.users raw_app_meta_data to prevent RLS recursion
+CREATE OR REPLACE FUNCTION public.sync_profile_role_to_auth()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE auth.users
+    SET raw_app_meta_data = 
+        coalesce(raw_app_meta_data, '{}'::jsonb) || jsonb_build_object('role', NEW.role)
+    WHERE id = NEW.id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE TRIGGER on_profile_role_sync
+    AFTER INSERT OR UPDATE OF role ON public.profiles
+    FOR EACH ROW EXECUTE FUNCTION public.sync_profile_role_to_auth();
+
 -- B. Automatically update the updated_at column on rows
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -176,9 +192,9 @@ BEGIN
     END IF;
 
     RETURN EXISTS (
-        SELECT 1 FROM public.profiles
+        SELECT 1 FROM auth.users
         WHERE id = auth.uid()
-          AND role IN ('super_admin', 'admin', 'sales', 'support')
+          AND raw_app_meta_data->>'role' IN ('super_admin', 'admin', 'sales', 'support')
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
