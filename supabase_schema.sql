@@ -199,6 +199,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Helper function to check if the current user is an admin or super admin
+CREATE OR REPLACE FUNCTION public.is_admin_or_super_admin()
+RETURNS BOOLEAN AS $$
+BEGIN
+    -- RLS recursion guard: guest/not-logged-in users cannot be admins
+    IF auth.uid() IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    RETURN EXISTS (
+        SELECT 1 FROM auth.users
+        WHERE id = auth.uid()
+          AND raw_app_meta_data->>'role' IN ('super_admin', 'admin')
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- 1. PROFILES POLICIES
 CREATE POLICY "Allow users to read their own profile, staff reads all"
     ON public.profiles FOR SELECT
@@ -210,12 +227,7 @@ CREATE POLICY "Allow users to update their own profiles"
 
 CREATE POLICY "Allow admin/super_admin to manage profiles"
     ON public.profiles FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND role IN ('admin', 'super_admin')
-        )
-    );
+    USING (public.is_admin_or_super_admin());
 
 -- 2. PROPERTY OWNERS POLICIES
 CREATE POLICY "Allow staff to read/manage all owner details"
