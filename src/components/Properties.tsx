@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { api } from '../lib/supabase';
+import { api, supabase, isDemoMode } from '../lib/supabase';
 import type { Property, PropertyStatus, PropertyType, CommissionType, PropertyOwner } from '../types';
 import { 
   Building, Plus, Edit2, Trash2, X, Check, 
-  MapPin, ChevronLeft, ChevronRight, Images
+  MapPin, ChevronLeft, ChevronRight, Images, Upload, Loader 
 } from 'lucide-react';
 
 const AMENITIES_LIST = [
@@ -16,9 +16,12 @@ const AMENITIES_LIST = [
 // Small image carousel for property cards
 const ImageCarousel: React.FC<{ images: string[]; title: string; status: string; propertyType: string }> = ({ images, title, status, propertyType }) => {
   const [cur, setCur] = useState(0);
+  const fallbackImage = 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=800&q=80';
+  const displayImages = images && images.length > 0 ? images : [fallbackImage];
+
   return (
     <div style={{ position: 'relative', height: '180px', width: '100%', overflow: 'hidden' }}>
-      <img src={images[cur]} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'opacity 0.3s' }} />
+      <img src={displayImages[cur]} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover', transition: 'opacity 0.3s' }} />
       <span className={`badge ${status === 'listed' ? 'badge-success' : status === 'maintenance' ? 'badge-warning' : 'badge-secondary'}`}
         style={{ position: 'absolute', top: '12px', right: '12px', boxShadow: 'var(--shadow-sm)' }}>
         {status}
@@ -26,18 +29,18 @@ const ImageCarousel: React.FC<{ images: string[]; title: string; status: string;
       <div style={{ position: 'absolute', bottom: '12px', left: '12px', backgroundColor: 'rgba(0,0,0,0.6)', color: 'white', padding: '0.25rem 0.625rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem', backdropFilter: 'blur(4px)', fontWeight: 600 }}>
         {propertyType.toUpperCase()}
       </div>
-      {images.length > 1 && (
+      {displayImages.length > 1 && (
         <>
-          <button onClick={e => { e.stopPropagation(); setCur(i => (i - 1 + images.length) % images.length); }}
+          <button onClick={e => { e.stopPropagation(); setCur(i => (i - 1 + displayImages.length) % displayImages.length); }}
             style={{ position: 'absolute', left: '6px', top: '50%', transform: 'translateY(-50%)', width: '26px', height: '26px', borderRadius: '50%', background: 'rgba(0,0,0,0.45)', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <ChevronLeft size={14} />
           </button>
-          <button onClick={e => { e.stopPropagation(); setCur(i => (i + 1) % images.length); }}
+          <button onClick={e => { e.stopPropagation(); setCur(i => (i + 1) % displayImages.length); }}
             style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', width: '26px', height: '26px', borderRadius: '50%', background: 'rgba(0,0,0,0.45)', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <ChevronRight size={14} />
           </button>
           <div style={{ position: 'absolute', bottom: '8px', right: '12px', display: 'flex', gap: '4px' }}>
-            {images.map((_, i) => (
+            {displayImages.map((_, i) => (
               <div key={i} style={{ width: '5px', height: '5px', borderRadius: '50%', background: i === cur ? 'white' : 'rgba(255,255,255,0.5)' }} />
             ))}
           </div>
@@ -76,10 +79,11 @@ export const Properties: React.FC = () => {
   const [maxGuests, setMaxGuests] = useState('2');
   const [status, setStatus] = useState<PropertyStatus>('listed');
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
-  const [imageUrls, setImageUrls] = useState<string[]>(['']);
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [ownerId, setOwnerId] = useState('');
   
   const [formError, setFormError] = useState('');
+  const [uploading, setUploading] = useState(false);
 
   const fetchPropertiesAndOwners = async () => {
     try {
@@ -127,7 +131,7 @@ export const Properties: React.FC = () => {
     setMaxGuests('2');
     setStatus('listed');
     setSelectedAmenities([]);
-    setImageUrls(['']);
+    setImageUrls([]);
     setFormError('');
     
     // Auto-select owner if current user is owner
@@ -161,15 +165,11 @@ export const Properties: React.FC = () => {
     setMaxGuests(prop.max_guests.toString());
     setStatus(prop.status);
     setSelectedAmenities(prop.amenities);
-    setImageUrls(prop.images && prop.images.length > 0 ? prop.images : ['']);
+    setImageUrls(prop.images || []);
     setOwnerId(prop.owner_id);
     setFormError('');
     setModalOpen(true);
   };
-
-  const addImageField = () => setImageUrls(prev => [...prev, '']);
-  const removeImageField = (i: number) => setImageUrls(prev => prev.filter((_, idx) => idx !== i));
-  const updateImageUrl = (i: number, val: string) => setImageUrls(prev => prev.map((u, idx) => idx === i ? val : u));
 
   const closeFormModal = () => {
     setModalOpen(false);
@@ -195,6 +195,84 @@ export const Properties: React.FC = () => {
     } catch (err: any) {
       alert(err.message || 'Failed to delete property.');
     }
+  };
+
+  const handleToggleStatus = async (id: string, currentStatus: PropertyStatus) => {
+    const newStatus: PropertyStatus = currentStatus === 'listed' ? 'unlisted' : 'listed';
+    try {
+      await api.updateProperty(id, { status: newStatus });
+      setProperties(prev => prev.map(p => p.id === id ? { ...p, status: newStatus } : p));
+    } catch (err: any) {
+      alert(err.message || 'Failed to update property status.');
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (imageUrls.length + files.length > 8) {
+      alert('You can upload up to 8 photos per property.');
+      return;
+    }
+
+    setUploading(true);
+    setFormError('');
+
+    try {
+      const uploadedUrls: string[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        if (isDemoMode) {
+          // Sandbox Mode fallback: Convert to Base64
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = error => reject(error);
+          });
+
+          if (base64.length > 1.5 * 1024 * 1024) {
+            alert(`File "${file.name}" is too large for fallback demo mode. Please upload photos under 1.5MB.`);
+            continue;
+          }
+          uploadedUrls.push(base64);
+        } else {
+          // Production Mode: Upload to Supabase Storage Bucket
+          if (!supabase) throw new Error('Supabase client not initialized.');
+
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+          const filePath = `${user?.id || 'public'}/${fileName}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('property-media')
+            .upload(filePath, file, { cacheControl: '3600', upsert: true });
+
+          if (uploadError) throw uploadError;
+
+          const { data } = supabase.storage
+            .from('property-media')
+            .getPublicUrl(filePath);
+
+          if (!data || !data.publicUrl) throw new Error('Failed to retrieve public upload link.');
+          uploadedUrls.push(data.publicUrl);
+        }
+      }
+
+      setImageUrls(prev => [...prev, ...uploadedUrls]);
+    } catch (err: any) {
+      console.error('File upload error:', err);
+      setFormError(err.message || 'Image upload failed. Ensure the "property-media" storage bucket is public.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeImageIndex = (indexToRemove: number) => {
+    setImageUrls(prev => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -237,9 +315,7 @@ export const Properties: React.FC = () => {
       bathrooms: parseFloat(bathrooms),
       max_guests: parseInt(maxGuests),
       amenities: selectedAmenities,
-      images: imageUrls.filter(u => u.trim()).length > 0
-        ? imageUrls.filter(u => u.trim())
-        : ['https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80'],
+      images: imageUrls.length > 0 ? imageUrls : ['https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1200&q=80'],
       status
     };
 
@@ -265,7 +341,6 @@ export const Properties: React.FC = () => {
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Create and manage property cards, pricing, and commissions.</p>
         </div>
         
-        {/* Only Admin, Staff, or verified Owners can add listings */}
         <button className="btn btn-primary" onClick={openNewModal}>
           <Plus size={18} /> Add Property
         </button>
@@ -288,96 +363,113 @@ export const Properties: React.FC = () => {
           {properties.map(p => {
             const images = p.images && p.images.length > 0 ? p.images : ['https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=800&q=80'];
             return (
-            <div key={p.id} className="card flex flex-col" style={{ padding: 0, overflow: 'hidden', height: '100%' }}>
-              {/* Header Image with gallery dots */}
-              <ImageCarousel images={images} title={p.title} status={p.status} propertyType={p.property_type} />
+              <div key={p.id} className="card flex flex-col" style={{ padding: 0, overflow: 'hidden', height: '100%' }}>
+                {/* Header Image with gallery dots */}
+                <ImageCarousel images={images} title={p.title} status={p.status} propertyType={p.property_type} />
 
-
-              {/* Card Contents */}
-              <div className="p-4 flex flex-col" style={{ flexGrow: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={p.title}>
-                    {p.title}
-                  </h4>
-                </div>
-
-                <div className="flex align-center gap-1" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  <MapPin size={12} style={{ color: 'var(--primary)' }} />
-                  <span>{p.city}, {p.country}</span>
-                </div>
-
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', height: '2.4rem' }}>
-                  {p.description || 'No description provided.'}
-                </p>
-
-                {/* Specs */}
-                <div 
-                  style={{ 
-                    display: 'flex', 
-                    gap: '12px', 
-                    fontSize: '0.75rem', 
-                    color: 'var(--text-muted)', 
-                    borderTop: '1px solid var(--border)', 
-                    borderBottom: '1px solid var(--border)',
-                    padding: '0.5rem 0',
-                    marginTop: '1rem'
-                  }}
-                >
-                  <span><strong>{p.bedrooms}</strong> Bed</span>
-                  <span><strong>{p.bathrooms}</strong> Bath</span>
-                  <span><strong>{p.max_guests}</strong> Guests</span>
-                </div>
-
-                {/* Owner info */}
-                {p.owner && (
-                  <div style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '0.75rem' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>Owned by:</span>
-                    <strong style={{ color: 'var(--text-primary)' }}>
-                      {p.owner.company_name || p.owner.profile?.full_name || 'Anonymous'}
-                    </strong>
-                  </div>
-                )}
-
-                {/* Price and commission flex */}
-                <div className="flex justify-between align-center" style={{ marginTop: 'auto', paddingTop: '1rem' }}>
-                  <div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>NIGHTLY RATE</div>
-                    <strong style={{ fontSize: '1.15rem', color: 'var(--primary)', fontWeight: 800 }}>
-                      {p.price_per_night} {p.currency}
-                    </strong>
+                {/* Card Contents */}
+                <div className="p-4 flex flex-col" style={{ flexGrow: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                    <h4 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={p.title}>
+                      {p.title}
+                    </h4>
                   </div>
 
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>COMMISSION</div>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 700 }}>
-                      {p.commission_type === 'percentage' 
-                        ? `${p.commission_value}%` 
-                        : `${p.commission_value} ${p.currency}`
-                      }
-                    </span>
+                  <div className="flex align-center gap-1" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    <MapPin size={12} style={{ color: 'var(--primary)' }} />
+                    <span>{p.city}, {p.country}</span>
                   </div>
-                </div>
 
-                {/* Actions */}
-                <div className="flex gap-2" style={{ borderTop: '1px solid var(--border)', marginTop: '1rem', paddingTop: '0.75rem' }}>
-                  <button 
-                    className="btn btn-secondary w-full" 
-                    style={{ padding: '0.4rem', fontSize: '0.75rem' }}
-                    onClick={() => openEditModal(p)}
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', height: '2.4rem' }}>
+                    {p.description || 'No description provided.'}
+                  </p>
+
+                  {/* Specs */}
+                  <div 
+                    style={{ 
+                      display: 'flex', 
+                      gap: '12px', 
+                      fontSize: '0.75rem', 
+                      color: 'var(--text-muted)', 
+                      borderTop: '1px solid var(--border)', 
+                      borderBottom: '1px solid var(--border)',
+                      padding: '0.5rem 0',
+                      marginTop: '1rem'
+                    }}
                   >
-                    <Edit2 size={12} /> Edit
-                  </button>
-                  <button 
-                    className="btn btn-secondary" 
-                    style={{ padding: '0.4rem', borderColor: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)' }}
-                    onClick={() => handleDelete(p.id)}
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                    <span><strong>{p.bedrooms}</strong> Bed</span>
+                    <span><strong>{p.bathrooms}</strong> Bath</span>
+                    <span><strong>{p.max_guests}</strong> Guests</span>
+                  </div>
+
+                  {/* Owner info */}
+                  {p.owner && (
+                    <div style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '0.75rem' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Owned by:</span>
+                      <strong style={{ color: 'var(--text-primary)' }}>
+                        {p.owner.company_name || p.owner.profile?.full_name || 'Anonymous'}
+                      </strong>
+                    </div>
+                  )}
+
+                  {/* Price and commission flex */}
+                  <div className="flex justify-between align-center" style={{ marginTop: 'auto', paddingTop: '1rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>NIGHTLY RATE</div>
+                      <strong style={{ fontSize: '1.15rem', color: 'var(--primary)', fontWeight: 800 }}>
+                        {p.price_per_night} {p.currency}
+                      </strong>
+                    </div>
+
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>COMMISSION</div>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 700 }}>
+                        {p.commission_type === 'percentage' 
+                          ? `${p.commission_value}%` 
+                          : `${p.commission_value} ${p.currency}`
+                        }
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2" style={{ borderTop: '1px solid var(--border)', marginTop: '1rem', paddingTop: '0.75rem' }}>
+                    <button 
+                      onClick={() => handleToggleStatus(p.id, p.status)}
+                      className={`btn`}
+                      style={{ 
+                        padding: '0.4rem 0.75rem', 
+                        fontSize: '0.75rem', 
+                        flexGrow: 1,
+                        backgroundColor: p.status === 'listed' ? 'rgba(0,0,0,0.05)' : 'var(--primary)',
+                        color: p.status === 'listed' ? 'var(--text-secondary)' : 'white',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontWeight: 700
+                      }}
+                    >
+                      {p.status === 'listed' ? 'Unlist' : 'List Property'}
+                    </button>
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ padding: '0.4rem', fontSize: '0.75rem' }}
+                      onClick={() => openEditModal(p)}
+                      title="Edit Property"
+                    >
+                      <Edit2 size={12} />
+                    </button>
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ padding: '0.4rem', borderColor: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)' }}
+                      onClick={() => handleDelete(p.id)}
+                      title="Delete Property"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
+            );
           })}
         </div>
       )}
@@ -385,7 +477,7 @@ export const Properties: React.FC = () => {
       {/* Property Creator / Editor Modal */}
       {modalOpen && (
         <div className="modal-overlay" onClick={closeFormModal}>
-          <div className="modal-content" style={{ maxWidth: '650px', maxHeight: '95vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+          <div className="modal-content" style={{ maxWidth: '650px' }} onClick={e => e.stopPropagation()}>
             <div className="drawer-header" style={{ borderBottom: 'none', padding: 0, marginBottom: '1.25rem' }}>
               <div>
                 <h3 style={{ fontSize: '1.2rem' }}>
@@ -407,7 +499,7 @@ export const Properties: React.FC = () => {
                 </div>
               )}
 
-              {/* Owner selection (Only staff sees this list. If current user is owner, they can only map to themselves) */}
+              {/* Owner selection */}
               <div className="form-group">
                 <label className="form-label">Property Owner *</label>
                 {user?.role === 'owner' ? (
@@ -647,42 +739,110 @@ export const Properties: React.FC = () => {
                 </div>
               </div>
 
-              {/* Multiple Image URLs */}
-              <div className="form-group">
+              {/* Multiple Image Upload Zone */}
+              <div className="form-group" style={{ marginTop: '1rem' }}>
                 <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Images size={14} /> Property Photos (multiple URLs supported)
+                  <Images size={14} /> Property Photos
                 </label>
-                <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Paste direct image URLs (Unsplash, Cloudinary, etc.). First image is the cover photo.</p>
-                {imageUrls.map((url, i) => (
-                  <div key={i} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
-                    <input
-                      type="url"
-                      className="form-control"
-                      style={{ marginBottom: 0 }}
-                      placeholder={i === 0 ? 'Cover image URL (required for display)' : `Photo ${i + 1} URL`}
-                      value={url}
-                      onChange={e => updateImageUrl(i, e.target.value)}
-                    />
-                    {imageUrls.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeImageField(i)}
-                        style={{ background: 'none', border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: '6px', padding: '0.4rem 0.5rem', cursor: 'pointer', flexShrink: 0 }}
+                <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                  Upload high-quality photos for your property. Drag and drop or browse files. First photo will be the cover image (Max 8 photos).
+                </p>
+
+                {/* Upload Card Dropzone */}
+                <div 
+                  onClick={() => document.getElementById('media-upload-input')?.click()}
+                  style={{
+                    border: '2px dashed var(--border)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '2rem 1.5rem',
+                    textAlign: 'center',
+                    cursor: uploading ? 'not-allowed' : 'pointer',
+                    backgroundColor: 'rgba(0, 0, 0, 0.02)',
+                    transition: 'all var(--transition-fast)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem'
+                  }}
+                  onMouseEnter={e => { if (!uploading) e.currentTarget.style.borderColor = 'var(--primary)'; }}
+                  onMouseLeave={e => { if (!uploading) e.currentTarget.style.borderColor = 'var(--border)'; }}
+                >
+                  <input 
+                    type="file" 
+                    id="media-upload-input" 
+                    multiple 
+                    accept="image/*" 
+                    style={{ display: 'none' }}
+                    disabled={uploading}
+                    onChange={handleImageUpload}
+                  />
+                  {uploading ? (
+                    <>
+                      <Loader className="animate-spin" size={24} style={{ color: 'var(--primary)' }} />
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Uploading property media...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={24} style={{ color: 'var(--text-muted)' }} />
+                      <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)' }}>Click to upload photos</span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Supports JPG, PNG, WEBP (Max 8 files)</span>
+                    </>
+                  )}
+                </div>
+
+                {/* Thumbnail Previews */}
+                {imageUrls.length > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginTop: '1rem' }}>
+                    {imageUrls.map((url, index) => (
+                      <div 
+                        key={index} 
+                        style={{ 
+                          position: 'relative', 
+                          height: '90px', 
+                          borderRadius: '8px', 
+                          overflow: 'hidden', 
+                          border: index === 0 ? '2px solid var(--primary)' : '1px solid var(--border)',
+                          boxShadow: 'var(--shadow-sm)'
+                        }}
                       >
-                        <X size={14} />
-                      </button>
-                    )}
+                        <img src={url} alt={`preview-${index}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        {index === 0 && (
+                          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'var(--primary)', color: 'white', fontSize: '0.6rem', textAlign: 'center', padding: '1px 0', fontWeight: 700 }}>
+                            COVER
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeImageIndex(index)}
+                          style={{
+                            position: 'absolute',
+                            top: '4px',
+                            right: '4px',
+                            width: '20px',
+                            height: '20px',
+                            borderRadius: '50%',
+                            backgroundColor: 'rgba(239, 68, 68, 0.85)',
+                            color: 'white',
+                            border: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: 0
+                          }}
+                          title="Delete photo"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                ))}
-                {imageUrls.length < 8 && (
-                  <button type="button" onClick={addImageField} className="btn btn-secondary" style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem', marginTop: '0.25rem' }}>
-                    <Plus size={12} /> Add Another Photo
-                  </button>
                 )}
               </div>
 
               {/* Amenities checkboxes */}
-              <div className="form-group" style={{ marginTop: '0.5rem' }}>
+              <div className="form-group" style={{ marginTop: '1.25rem' }}>
                 <label className="form-label">Select Amenities</label>
                 <div className="grid grid-4 gap-2" style={{ marginTop: '0.25rem' }}>
                   {AMENITIES_LIST.map(amenity => {
@@ -717,7 +877,7 @@ export const Properties: React.FC = () => {
 
               <div className="flex justify-end gap-2" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
                 <button type="button" className="btn btn-secondary" onClick={closeFormModal}>Cancel</button>
-                <button type="submit" className="btn btn-primary">
+                <button type="submit" className="btn btn-primary" disabled={uploading}>
                   {editingProperty ? 'Save Changes' : 'Publish Property'}
                 </button>
               </div>
