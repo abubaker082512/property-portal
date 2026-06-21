@@ -34,7 +34,7 @@ const setStorage = <T>(key: string, data: T): void => {
 };
 
 // Initial Seed Data for Demo Mode
-const SEED_VERSION = 'v2'; // bump to force-reset all local demo data
+const SEED_VERSION = 'v3'; // bump to force-reset all local demo data
 const initDemoData = () => {
   if (localStorage.getItem('prop_portal_seed_version') !== SEED_VERSION) {
     [MOCK_PROFILES_KEY, MOCK_OWNERS_KEY, MOCK_PROPERTIES_KEY,
@@ -46,7 +46,7 @@ const initDemoData = () => {
   // 1. Initial Profiles
   if (!localStorage.getItem(MOCK_PROFILES_KEY)) {
     const profiles: Profile[] = [
-      { id: 'u-admin', full_name: 'Admin Director', role: 'admin', phone: '+1234567890', created_at: new Date().toISOString() },
+      { id: 'u-admin', full_name: 'Admin Director', role: 'super_admin', phone: '+1234567890', created_at: new Date().toISOString() },
       { id: 'u-sales', full_name: 'Sarah Sales (Agent)', role: 'sales', phone: '+1234567891', created_at: new Date().toISOString() },
       { id: 'u-support', full_name: 'David Support (Agent)', role: 'support', phone: '+1234567892', created_at: new Date().toISOString() },
       { id: 'u-owner1', full_name: 'John Peterson', role: 'owner', phone: '+1234567893', created_at: new Date().toISOString() },
@@ -462,6 +462,39 @@ export const api = {
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data;
+  },
+
+  updateProfileRole: async (profileId: string, role: UserRole): Promise<Profile> => {
+    if (isDemoMode) {
+      const profiles = getStorage<Profile[]>(MOCK_PROFILES_KEY, []);
+      const idx = profiles.findIndex(p => p.id === profileId);
+      if (idx === -1) throw new Error('Profile not found');
+      profiles[idx].role = role;
+      setStorage(MOCK_PROFILES_KEY, profiles);
+      return profiles[idx];
+    }
+    const { data, error } = await supabase!
+      .from('profiles')
+      .update({ role })
+      .eq('id', profileId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  deleteProfile: async (profileId: string): Promise<void> => {
+    if (isDemoMode) {
+      const profiles = getStorage<Profile[]>(MOCK_PROFILES_KEY, []);
+      const filtered = profiles.filter(p => p.id !== profileId);
+      setStorage(MOCK_PROFILES_KEY, filtered);
+      return;
+    }
+    const { error } = await supabase!
+      .from('profiles')
+      .delete()
+      .eq('id', profileId);
+    if (error) throw error;
   },
 
   createStaffAccount: async (fullName: string, _email: string, role: UserRole, phone?: string): Promise<Profile> => {

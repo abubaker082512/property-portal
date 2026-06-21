@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import type { Profile } from '../types';
-import { api } from '../lib/supabase';
 import { 
   LayoutDashboard, Calendar, Building, Users, 
-  Receipt, LogOut, Sun, Moon, RefreshCw, ChevronDown, Home
+  Receipt, LogOut, Sun, Moon, RefreshCw, Home
 } from 'lucide-react';
 
 interface PortalShellProps {
@@ -18,13 +16,11 @@ export const PortalShell: React.FC<PortalShellProps> = ({
   setActiveTab, 
   children 
 }) => {
-  const { user, logout, isDemo, switchDemoUser } = useAuth();
-  const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
+  const { user, logout } = useAuth();
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('theme') === 'dark' || 
       (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
-  const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
 
   // Apply dark mode class
   useEffect(() => {
@@ -37,31 +33,19 @@ export const PortalShell: React.FC<PortalShellProps> = ({
     }
   }, [darkMode]);
 
-  // Load all profiles for demo switcher
-  useEffect(() => {
-    if (isDemo) {
-      api.getProfiles().then(setAllProfiles).catch(console.error);
-    }
-  }, [isDemo, user]);
-
   if (!user) return null;
 
   // Define sidebar items based on roles
   const getMenuItems = () => {
     const items = [
-      { id: 'browse', label: 'View Guest Site', icon: <Home size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
-      { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
-      { id: 'scheduler', label: 'Booking Scheduler', icon: <Calendar size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
-      { id: 'bookings', label: 'Bookings List', icon: <Receipt size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
-      { id: 'properties', label: 'Properties', icon: <Building size={20} />, roles: ['admin', 'sales', 'support', 'owner'] },
-      { id: 'staff', label: 'Staff Management', icon: <Users size={20} />, roles: ['admin'] }
+      { id: 'browse', label: 'View Guest Site', icon: <Home size={20} />, roles: ['super_admin', 'admin', 'sales', 'support', 'owner'] },
+      { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} />, roles: ['super_admin', 'admin', 'sales', 'support', 'owner'] },
+      { id: 'scheduler', label: 'Booking Scheduler', icon: <Calendar size={20} />, roles: ['super_admin', 'admin', 'sales', 'support', 'owner'] },
+      { id: 'bookings', label: 'Bookings List', icon: <Receipt size={20} />, roles: ['super_admin', 'admin', 'sales', 'support', 'owner'] },
+      { id: 'properties', label: 'Properties', icon: <Building size={20} />, roles: ['super_admin', 'admin', 'sales', 'support', 'owner'] },
+      { id: 'staff', label: 'User Management', icon: <Users size={20} />, roles: ['super_admin', 'admin'] }
     ];
     return items.filter(item => item.roles.includes(user.role));
-  };
-
-  const handleRoleSwitch = (profileId: string) => {
-    switchDemoUser(profileId);
-    setShowRoleSwitcher(false);
   };
 
   return (
@@ -100,48 +84,6 @@ export const PortalShell: React.FC<PortalShellProps> = ({
             </li>
           ))}
         </ul>
-
-        {/* Demo Mode Badge / Switcher */}
-        {isDemo && (
-          <div style={{ padding: '0.75rem 1rem', background: 'rgba(16, 185, 129, 0.15)', borderTop: '1px solid rgba(16, 185, 129, 0.2)', borderBottom: '1px solid rgba(16, 185, 129, 0.2)' }}>
-            <div className="flex align-center justify-between" style={{ marginBottom: '0.5rem' }}>
-              <span className="badge badge-success" style={{ fontSize: '0.65rem', padding: '0.15rem 0.5rem' }}>Demo Active</span>
-              <button 
-                onClick={() => setShowRoleSwitcher(!showRoleSwitcher)}
-                className="flex align-center gap-1"
-                style={{ background: 'transparent', border: 'none', color: 'hsl(150, 76%, 80%)', fontSize: '0.75rem', cursor: 'pointer', outline: 'none' }}
-              >
-                Switch Role <ChevronDown size={14} />
-              </button>
-            </div>
-            {showRoleSwitcher && (
-              <div className="flex flex-col gap-1" style={{ maxHeight: '150px', overflowY: 'auto', background: 'rgba(0,0,0,0.3)', padding: '0.35rem', borderRadius: '6px' }}>
-                {allProfiles.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => handleRoleSwitch(p.id)}
-                    style={{
-                      background: p.id === user.id ? 'var(--primary)' : 'transparent',
-                      border: 'none',
-                      color: p.id === user.id ? 'white' : '#cbd5e1',
-                      padding: '0.3rem 0.5rem',
-                      textAlign: 'left',
-                      fontSize: '0.75rem',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between'
-                    }}
-                  >
-                    <span>{p.full_name}</span>
-                    <span style={{ fontSize: '0.6rem', opacity: 0.7, textTransform: 'capitalize' }}>({p.role})</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* User Info & Logout */}
         <div className="sidebar-user">

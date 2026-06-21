@@ -1,13 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { api } from '../lib/supabase';
-import type { Profile } from '../types';
-import { Building, Shield, Key, RefreshCw, Eye, EyeOff, UserPlus, LogIn, Home } from 'lucide-react';
+import { Building, Key, RefreshCw, Eye, EyeOff, UserPlus, LogIn, Home } from 'lucide-react';
 
 type AuthMode = 'login' | 'register';
 
 export const Login: React.FC = () => {
-  const { login, register, isDemo, switchDemoUser } = useAuth();
+  const { login, register, isDemo } = useAuth();
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,14 +16,6 @@ export const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const [demoProfiles, setDemoProfiles] = useState<Profile[]>([]);
-
-  // Load demo profiles for easy entry
-  useEffect(() => {
-    if (isDemo) {
-      api.getProfiles().then(setDemoProfiles).catch(console.error);
-    }
-  }, [isDemo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,26 +43,6 @@ export const Login: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleDemoQuickLogin = async (p: Profile) => {
-    setError('');
-    setLoading(true);
-    try {
-      await switchDemoUser(p.id);
-    } catch (err: any) {
-      setError(err.message || 'Failed to switch to demo role.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const roleColors: Record<string, { bg: string; color: string }> = {
-    admin: { bg: 'var(--danger-light)', color: 'var(--danger)' },
-    sales: { bg: 'var(--primary-light)', color: 'var(--primary)' },
-    support: { bg: 'var(--secondary-light)', color: 'var(--secondary)' },
-    owner: { bg: 'var(--success-light)', color: 'var(--success)' },
-    customer: { bg: 'var(--warning-light)', color: 'var(--warning)' },
   };
 
   return (
@@ -157,50 +127,6 @@ export const Login: React.FC = () => {
             </div>
           )}
 
-          {/* Demo Quick Logins */}
-          {isDemo && mode === 'login' && demoProfiles.length > 0 && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '0.625rem' }}>
-                <Shield size={13} style={{ color: 'var(--success)' }} />
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--success)' }}>Demo Quick Sign-In</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                {demoProfiles.slice(0, 6).map(p => {
-                  const colors = roleColors[p.role] || { bg: 'var(--bg-app)', color: 'var(--text-secondary)' };
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => handleDemoQuickLogin(p)}
-                      style={{
-                        padding: '0.55rem 0.75rem',
-                        border: '1px solid var(--border)',
-                        borderRadius: '8px',
-                        background: 'var(--bg-card)',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        transition: 'all var(--transition-fast)'
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--primary)')}
-                      onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
-                    >
-                      <div style={{ width: '26px', height: '26px', borderRadius: '50%', backgroundColor: colors.bg, color: colors.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.7rem', flexShrink: 0 }}>
-                        {p.full_name.charAt(0)}
-                      </div>
-                      <div style={{ overflow: 'hidden' }}>
-                        <div style={{ fontSize: '0.75rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name.split(' ')[0]}</div>
-                        <div style={{ fontSize: '0.65rem', color: colors.color, fontWeight: 600, textTransform: 'capitalize' }}>{p.role}</div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Form */}
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
             {mode === 'register' && (
@@ -217,39 +143,37 @@ export const Login: React.FC = () => {
             )}
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">{isDemo && mode === 'login' ? 'Email / Name Search' : 'Email Address *'}</label>
+              <label className="form-label">Email Address *</label>
               <input
-                type={isDemo && mode === 'login' ? 'text' : 'email'}
+                type="email"
                 className="form-control"
-                placeholder={isDemo && mode === 'login' ? 'Type name or use quick login above...' : 'you@example.com'}
+                placeholder="you@example.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                required={!(isDemo && mode === 'login')}
+                required
                 autoComplete="email"
               />
             </div>
 
-            {(!isDemo || mode === 'register') && (
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Password *</label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    className="form-control"
-                    placeholder={mode === 'register' ? 'Minimum 6 characters' : '••••••••'}
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    style={{ paddingRight: '2.5rem' }}
-                    required
-                    autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                  />
-                  <button type="button" onClick={() => setShowPassword(s => !s)}
-                    style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Password *</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  className="form-control"
+                  placeholder={mode === 'register' ? 'Minimum 6 characters' : '••••••••'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  style={{ paddingRight: '2.5rem' }}
+                  required
+                  autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                />
+                <button type="button" onClick={() => setShowPassword(s => !s)}
+                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
-            )}
+            </div>
 
             {mode === 'register' && (
               <div className="form-group" style={{ marginBottom: 0 }}>

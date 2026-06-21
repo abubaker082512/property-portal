@@ -3,17 +3,18 @@ import { useAuth } from '../context/AuthContext';
 import { api, isDemoMode } from '../lib/supabase';
 import type { Profile, UserRole } from '../types';
 import { format, parseISO } from 'date-fns';
-import { Users, X, UserPlus, ShieldAlert, Check } from 'lucide-react';
+import { Users, X, UserPlus, ShieldAlert, Check, Trash2 } from 'lucide-react';
 
 export const StaffManagement: React.FC = () => {
   const { user } = useAuth();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   // Form states
   const [modalOpen, setModalOpen] = useState(false);
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState(''); // also acts as mock login username
+  const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('sales');
   const [phone, setPhone] = useState('');
   const [formError, setFormError] = useState('');
@@ -32,23 +33,64 @@ export const StaffManagement: React.FC = () => {
   };
 
   useEffect(() => {
-    if (user?.role === 'admin') {
+    if (user?.role === 'admin' || user?.role === 'super_admin') {
       fetchProfiles();
     }
   }, [user]);
 
-  // Restrict view if not Admin
-  if (user?.role !== 'admin') {
+  // Restrict view if not Admin or Super Admin
+  if (user?.role !== 'admin' && user?.role !== 'super_admin') {
     return (
       <div className="card flex flex-col align-center justify-between" style={{ padding: '3rem', textAlign: 'center' }}>
         <ShieldAlert size={48} style={{ color: 'var(--danger)', marginBottom: '1rem' }} />
         <h3>Access Denied</h3>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: '400px', margin: '0.5rem auto 0' }}>
-          This administrative control center is restricted to Admin accounts only. Booking staff and property owners do not have permissions to modify user registries.
+          This administrative control center is restricted to Admin and Super Admin accounts only.
         </p>
       </div>
     );
   }
+
+  const canManageUser = (targetProfile: Profile) => {
+    // You cannot delete or edit yourself
+    if (targetProfile.id === user.id) return false;
+    
+    // Super Admins can manage all other users
+    if (user.role === 'super_admin') return true;
+    
+    // Admins can manage sales, support, owners, and customers
+    if (user.role === 'admin') {
+      return targetProfile.role !== 'admin' && targetProfile.role !== 'super_admin';
+    }
+    
+    return false;
+  };
+
+  const handleRoleChange = async (profileId: string, newRole: UserRole) => {
+    setUpdatingId(profileId);
+    try {
+      await api.updateProfileRole(profileId, newRole);
+      setProfiles(prev => prev.map(p => p.id === profileId ? { ...p, role: newRole } : p));
+    } catch (err: any) {
+      alert(err.message || 'Failed to update user role.');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleDeleteUser = async (profileId: string, name: string) => {
+    if (window.confirm(`Are you sure you want to permanently delete user "${name}"?`)) {
+      setUpdatingId(profileId);
+      try {
+        await api.deleteProfile(profileId);
+        setProfiles(prev => prev.filter(p => p.id !== profileId));
+      } catch (err: any) {
+        alert(err.message || 'Failed to delete user.');
+      } finally {
+        setUpdatingId(null);
+      }
+    }
+  };
 
   const openModal = () => {
     setFullName('');
@@ -103,14 +145,14 @@ export const StaffManagement: React.FC = () => {
       {/* Header */}
       <div className="flex justify-between align-center">
         <div>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Staff Registry Desk</h2>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>User Management Registry</h2>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            Admin portal to register support agents, sales desk staff, and property owners.
+            System control center to manage all user profiles, change roles, or remove accounts.
           </p>
         </div>
 
         <button className="btn btn-primary" onClick={openModal}>
-          <UserPlus size={18} /> Add New Staff
+          <UserPlus size={18} /> Register New User
         </button>
       </div>
 
@@ -118,7 +160,7 @@ export const StaffManagement: React.FC = () => {
       {!isDemoMode && (
         <div style={{ padding: '0.75rem 1rem', display: 'flex', gap: '8px', backgroundColor: 'var(--warning-light)', color: 'var(--warning)', borderRadius: '8px', fontSize: '0.8rem', fontWeight: 600 }}>
           <ShieldAlert size={18} style={{ flexShrink: 0 }} />
-          <span>Note: Manual staff registration is currently configured in production. Creating a user will trigger a profiles record. Secure authentication invites should be sent via Supabase dashboard.</span>
+          <span>Note: User changes here modify database records instantly. New accounts registered will trigger Supabase profile creation. Secure logins must be processed via Supabase Auth invites.</span>
         </div>
       )}
 
@@ -127,7 +169,7 @@ export const StaffManagement: React.FC = () => {
         {loading ? (
           <div style={{ padding: '3rem', textAlign: 'center' }}>
             <Users className="animate-spin" style={{ color: 'var(--primary)', animation: 'spin 2s linear infinite', margin: '0 auto 1rem' }} size={32} />
-            <span style={{ color: 'var(--text-secondary)' }}>Querying staff records...</span>
+            <span style={{ color: 'var(--text-secondary)' }}>Querying system registry...</span>
           </div>
         ) : (
           <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
@@ -139,11 +181,12 @@ export const StaffManagement: React.FC = () => {
                   <th>Assigned Role</th>
                   <th>Phone Number</th>
                   <th>Created Date</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {profiles.map(p => (
-                  <tr key={p.id}>
+                  <tr key={p.id} style={{ opacity: updatingId === p.id ? 0.6 : 1 }}>
                     <td>
                       <div className="flex align-center gap-3">
                         <div style={{
@@ -163,7 +206,7 @@ export const StaffManagement: React.FC = () => {
                         <div>
                           <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.full_name}</div>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            {p.role === 'owner' ? 'Owner Account' : p.role === 'admin' ? 'System Administrator' : 'Desk Agent'}
+                            {p.role === 'super_admin' ? 'Super Administrator' : p.role === 'admin' ? 'Administrator' : p.role === 'owner' ? 'Owner Account' : 'Desk Agent'}
                           </div>
                         </div>
                       </div>
@@ -174,13 +217,30 @@ export const StaffManagement: React.FC = () => {
                     </td>
 
                     <td>
-                      <span className={`badge ${
-                        p.role === 'admin' ? 'badge-danger' : 
-                        p.role === 'owner' ? 'badge-success' : 
-                        p.role === 'sales' ? 'badge-info' : 'badge-warning'
-                      }`}>
-                        {p.role}
-                      </span>
+                      {canManageUser(p) ? (
+                        <select
+                          className="form-control"
+                          style={{ margin: 0, padding: '0.25rem 0.5rem', width: 'auto', fontSize: '0.8rem', height: 'auto' }}
+                          value={p.role}
+                          onChange={e => handleRoleChange(p.id, e.target.value as UserRole)}
+                          disabled={updatingId === p.id}
+                        >
+                          {user.role === 'super_admin' && <option value="super_admin">super_admin</option>}
+                          <option value="admin">admin</option>
+                          <option value="sales">sales</option>
+                          <option value="support">support</option>
+                          <option value="owner">owner</option>
+                          <option value="customer">customer</option>
+                        </select>
+                      ) : (
+                        <span className={`badge ${
+                          p.role === 'super_admin' || p.role === 'admin' ? 'badge-danger' : 
+                          p.role === 'owner' ? 'badge-success' : 
+                          p.role === 'sales' ? 'badge-info' : 'badge-warning'
+                        }`}>
+                          {p.role}
+                        </span>
+                      )}
                     </td>
 
                     <td style={{ color: 'var(--text-secondary)' }}>
@@ -189,6 +249,28 @@ export const StaffManagement: React.FC = () => {
 
                     <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                       {format(parseISO(p.created_at), 'MMM d, yyyy')}
+                    </td>
+
+                    <td style={{ textAlign: 'right' }}>
+                      {canManageUser(p) ? (
+                        <button
+                          onClick={() => handleDeleteUser(p.id, p.full_name)}
+                          className="btn btn-secondary"
+                          style={{ 
+                            padding: '0.3rem', 
+                            color: 'var(--danger)', 
+                            borderColor: 'rgba(239, 68, 68, 0.2)',
+                            background: 'transparent',
+                            cursor: 'pointer'
+                          }}
+                          disabled={updatingId === p.id}
+                          title="Delete User Account"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Locked</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -204,9 +286,9 @@ export const StaffManagement: React.FC = () => {
           <div className="modal-content" style={{ maxWidth: '450px' }} onClick={e => e.stopPropagation()}>
             <div className="drawer-header" style={{ borderBottom: 'none', padding: 0, marginBottom: '1.25rem' }}>
               <div>
-                <h3 style={{ fontSize: '1.2rem' }}>Register New Portal User</h3>
+                <h3 style={{ fontSize: '1.2rem' }}>Register New User Profile</h3>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                  Set up internal credentials for booking, sales, or owners.
+                  Create internal system profile credentials.
                 </p>
               </div>
               <button onClick={closeModal} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
@@ -263,10 +345,11 @@ export const StaffManagement: React.FC = () => {
                     onChange={e => setRole(e.target.value as UserRole)}
                     disabled={!!formSuccess}
                   >
+                    {user.role === 'super_admin' && <option value="super_admin">Super Administrator</option>}
+                    <option value="admin">Administrator</option>
                     <option value="sales">Sales Agent</option>
                     <option value="support">Customer Support</option>
                     <option value="owner">Property Owner</option>
-                    <option value="admin">Administrator</option>
                   </select>
                 </div>
 
