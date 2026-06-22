@@ -554,6 +554,135 @@ export const api = {
     return data;
   },
 
+  createOwner: async (ownerData: { fullName?: string; companyName?: string; taxId?: string; phone?: string; profileId?: string }): Promise<PropertyOwner> => {
+    if (isDemoMode) {
+      const profiles = getStorage<Profile[]>(MOCK_PROFILES_KEY, []);
+      const owners = getStorage<PropertyOwner[]>(MOCK_OWNERS_KEY, []);
+      
+      let profileId = ownerData.profileId;
+      let matchedProfile = profileId ? profiles.find(p => p.id === profileId) : undefined;
+      
+      if (!profileId || !matchedProfile) {
+        profileId = `u-owner-${Date.now()}`;
+        matchedProfile = {
+          id: profileId,
+          full_name: ownerData.fullName || 'New Owner',
+          role: 'owner',
+          phone: ownerData.phone,
+          created_at: new Date().toISOString()
+        };
+        profiles.push(matchedProfile);
+        setStorage(MOCK_PROFILES_KEY, profiles);
+      } else {
+        // Upgrade existing profile to owner
+        matchedProfile.role = 'owner';
+        if (ownerData.phone) matchedProfile.phone = ownerData.phone;
+        setStorage(MOCK_PROFILES_KEY, profiles);
+      }
+      
+      const newOwnerId = `o-${Date.now()}`;
+      const newOwner: PropertyOwner = {
+        id: newOwnerId,
+        profile_id: profileId,
+        company_name: ownerData.companyName || `${matchedProfile.full_name} Properties`,
+        tax_id: ownerData.taxId || `TX-${Math.floor(100000 + Math.random() * 900000)}`,
+        verified: true,
+        created_at: new Date().toISOString()
+      };
+      
+      owners.push(newOwner);
+      setStorage(MOCK_OWNERS_KEY, owners);
+      
+      return {
+        ...newOwner,
+        profile: matchedProfile
+      };
+    }
+    
+    // In Production Mode
+    if (ownerData.profileId) {
+      // 1. Update the profile role to 'owner'
+      const { error: profileError } = await supabase!
+        .from('profiles')
+        .update({ role: 'owner' })
+        .eq('id', ownerData.profileId);
+        
+      if (profileError) throw profileError;
+      
+      // 2. Insert the property owner row
+      const { data, error } = await supabase!
+        .from('property_owners')
+        .insert({
+          profile_id: ownerData.profileId,
+          company_name: ownerData.companyName,
+          tax_id: ownerData.taxId,
+          verified: true
+        })
+        .select('*, profile:profiles(*)')
+        .single();
+        
+      if (error) throw error;
+      return data;
+    }
+    
+    throw new Error('Direct Owner creation in production requires choosing an existing profile to upgrade to owner, or creating a user via User Management Registry first.');
+  },
+
+  updateOwner: async (ownerId: string, ownerData: { companyName?: string; taxId?: string; verified?: boolean }): Promise<PropertyOwner> => {
+    if (isDemoMode) {
+      const owners = getStorage<PropertyOwner[]>(MOCK_OWNERS_KEY, []);
+      const idx = owners.findIndex(o => o.id === ownerId);
+      if (idx === -1) throw new Error('Owner profile not found');
+      
+      owners[idx] = {
+        ...owners[idx],
+        company_name: ownerData.companyName !== undefined ? ownerData.companyName : owners[idx].company_name,
+        tax_id: ownerData.taxId !== undefined ? ownerData.taxId : owners[idx].tax_id,
+        verified: ownerData.verified !== undefined ? ownerData.verified : owners[idx].verified
+      };
+      
+      setStorage(MOCK_OWNERS_KEY, owners);
+      
+      const profiles = getStorage<Profile[]>(MOCK_PROFILES_KEY, []);
+      return {
+        ...owners[idx],
+        profile: profiles.find(p => p.id === owners[idx].profile_id)
+      };
+    }
+    
+    // In Production Mode
+    const { data, error } = await supabase!
+      .from('property_owners')
+      .update({
+        company_name: ownerData.companyName,
+        tax_id: ownerData.taxId,
+        verified: ownerData.verified
+      })
+      .eq('id', ownerId)
+      .select('*, profile:profiles(*)')
+      .single();
+      
+    if (error) throw error;
+    return data;
+  },
+
+  deleteOwner: async (ownerId: string): Promise<void> => {
+    if (isDemoMode) {
+      const owners = getStorage<PropertyOwner[]>(MOCK_OWNERS_KEY, []);
+      const filtered = owners.filter(o => o.id !== ownerId);
+      setStorage(MOCK_OWNERS_KEY, filtered);
+      return;
+    }
+    
+    // In Production Mode
+    const { error } = await supabase!
+      .from('property_owners')
+      .delete()
+      .eq('id', ownerId);
+      
+    if (error) throw error;
+  },
+
   // --- PROPERTIES API ---
   getProperties: async (): Promise<Property[]> => {
     if (isDemoMode) {

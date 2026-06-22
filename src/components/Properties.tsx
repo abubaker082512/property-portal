@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api, supabase, isDemoMode } from '../lib/supabase';
-import type { Property, PropertyStatus, PropertyType, CommissionType, PropertyOwner } from '../types';
+import type { Property, PropertyStatus, PropertyType, CommissionType, PropertyOwner, Profile } from '../types';
 import { 
-  Building, Plus, Edit2, Trash2, X, Check, 
-  MapPin, ChevronLeft, ChevronRight, Images, Upload, Loader 
+  Building, Plus, Edit2, Trash2, X, Check, UserPlus,
+  MapPin, ChevronLeft, ChevronRight, Images, Upload, Loader, Users, ShieldCheck, ArrowUpRight
 } from 'lucide-react';
 
 const AMENITIES_LIST = [
@@ -81,9 +81,141 @@ export const Properties: React.FC = () => {
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [ownerId, setOwnerId] = useState('');
+
+  // Add/Manage Owners Modal States
+  const [ownersModalOpen, setOwnersModalOpen] = useState(false);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [promoteMode, setPromoteMode] = useState(false);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [newOwnerName, setNewOwnerName] = useState('');
+  const [newOwnerCompanyName, setNewOwnerCompanyName] = useState('');
+  const [newOwnerTaxId, setNewOwnerTaxId] = useState('');
+  const [newOwnerPhone, setNewOwnerPhone] = useState('');
+  const [editingOwner, setEditingOwner] = useState<PropertyOwner | null>(null);
+  const [ownersModalError, setOwnersModalError] = useState('');
+  const [ownersModalSuccess, setOwnersModalSuccess] = useState('');
+  const [loadingProfiles, setLoadingProfiles] = useState(false);
   
   const [formError, setFormError] = useState('');
   const [uploading, setUploading] = useState(false);
+
+  const fetchProfilesForOwners = async () => {
+    try {
+      setLoadingProfiles(true);
+      const allProfiles = await api.getProfiles();
+      setProfiles(allProfiles);
+    } catch (err) {
+      console.error('Failed to load profiles:', err);
+    } finally {
+      setLoadingProfiles(false);
+    }
+  };
+
+  useEffect(() => {
+    if (ownersModalOpen) {
+      fetchProfilesForOwners();
+    }
+  }, [ownersModalOpen]);
+
+  const handleOwnerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setOwnersModalError('');
+    setOwnersModalSuccess('');
+
+    try {
+      if (editingOwner) {
+        await api.updateOwner(editingOwner.id, {
+          companyName: newOwnerCompanyName,
+          taxId: newOwnerTaxId
+        });
+        
+        const allOwners = await api.getOwners();
+        setOwners(allOwners);
+        setOwnersModalSuccess('Owner details updated successfully!');
+        cancelOwnerEdit();
+      } else {
+        const payload: { fullName?: string; companyName?: string; taxId?: string; phone?: string; profileId?: string } = {
+          companyName: newOwnerCompanyName,
+          taxId: newOwnerTaxId
+        };
+        
+        if (promoteMode) {
+          if (!selectedProfileId) {
+            setOwnersModalError('Please select a profile to promote.');
+            return;
+          }
+          payload.profileId = selectedProfileId;
+        } else {
+          if (!newOwnerName.trim()) {
+            setOwnersModalError("Please enter the owner's full name.");
+            return;
+          }
+          payload.fullName = newOwnerName;
+          payload.phone = newOwnerPhone;
+        }
+        
+        const created = await api.createOwner(payload);
+        const allOwners = await api.getOwners();
+        setOwners(allOwners);
+        setOwnerId(created.id);
+        
+        setOwnersModalSuccess(`Owner "${created.profile?.full_name}" registered successfully!`);
+        
+        setNewOwnerName('');
+        setNewOwnerCompanyName('');
+        setNewOwnerTaxId('');
+        setNewOwnerPhone('');
+        setSelectedProfileId('');
+        
+        setTimeout(() => {
+          setOwnersModalOpen(false);
+          setOwnersModalSuccess('');
+        }, 1200);
+      }
+    } catch (err: any) {
+      console.error('Owner submit error:', err);
+      setOwnersModalError(err.message || 'Failed to submit owner data.');
+    }
+  };
+
+  const handleOwnerDelete = async (oId: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to delete owner "${name}"? All properties associated with this owner will be deleted as well!`)) {
+      return;
+    }
+    setOwnersModalError('');
+    setOwnersModalSuccess('');
+    try {
+      await api.deleteOwner(oId);
+      const allOwners = await api.getOwners();
+      setOwners(allOwners);
+      
+      if (ownerId === oId) {
+        setOwnerId('');
+      }
+      
+      setOwnersModalSuccess('Owner deleted successfully.');
+    } catch (err: any) {
+      setOwnersModalError(err.message || 'Failed to delete owner.');
+    }
+  };
+
+  const startOwnerEdit = (o: PropertyOwner) => {
+    setEditingOwner(o);
+    setNewOwnerName(o.profile?.full_name || '');
+    setNewOwnerCompanyName(o.company_name || '');
+    setNewOwnerTaxId(o.tax_id || '');
+    setNewOwnerPhone(o.profile?.phone || '');
+    setPromoteMode(false);
+  };
+
+  const cancelOwnerEdit = () => {
+    setEditingOwner(null);
+    setNewOwnerName('');
+    setNewOwnerCompanyName('');
+    setNewOwnerTaxId('');
+    setNewOwnerPhone('');
+    setSelectedProfileId('');
+  };
 
   const fetchPropertiesAndOwners = async () => {
     try {
@@ -341,9 +473,19 @@ export const Properties: React.FC = () => {
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Create and manage property cards, pricing, and commissions.</p>
         </div>
         
-        <button className="btn btn-primary" onClick={openNewModal}>
-          <Plus size={18} /> Add Property
-        </button>
+        <div className="flex gap-2">
+          {(user?.role === 'admin' || user?.role === 'super_admin') && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => { setOwnersModalOpen(true); cancelOwnerEdit(); setOwnersModalError(''); setOwnersModalSuccess(''); }}
+            >
+              <Users size={18} /> Manage Owners
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={openNewModal}>
+            <Plus size={18} /> Add Property
+          </button>
+        </div>
       </div>
 
       {/* Grid List */}
@@ -501,7 +643,18 @@ export const Properties: React.FC = () => {
 
               {/* Owner selection */}
               <div className="form-group">
-                <label className="form-label">Property Owner *</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Property Owner *</label>
+                  {user?.role !== 'owner' && (
+                    <button
+                      type="button"
+                      onClick={() => { setOwnersModalOpen(true); cancelOwnerEdit(); setOwnersModalError(''); setOwnersModalSuccess(''); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: '0.72rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}
+                    >
+                      <UserPlus size={12} /> Add / Manage Owners
+                    </button>
+                  )}
+                </div>
                 {user?.role === 'owner' ? (
                   <input
                     type="text"
@@ -882,6 +1035,180 @@ export const Properties: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============ OWNERS MANAGEMENT MODAL ============ */}
+      {ownersModalOpen && (
+        <div className="modal-overlay" onClick={() => setOwnersModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '680px' }} onClick={e => e.stopPropagation()}>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Users size={18} style={{ color: 'var(--primary)' }} /> Owner Management
+                </h3>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  Register new property owners or manage existing ones. Owners are linked to a profile account.
+                </p>
+              </div>
+              <button onClick={() => setOwnersModalOpen(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Feedback */}
+            {ownersModalError && (
+              <div style={{ padding: '0.65rem 0.85rem', backgroundColor: 'var(--danger-light)', color: 'var(--danger)', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '1rem', fontWeight: 600 }}>
+                {ownersModalError}
+              </div>
+            )}
+            {ownersModalSuccess && (
+              <div style={{ padding: '0.65rem 0.85rem', backgroundColor: 'var(--success-light)', color: 'var(--success)', borderRadius: '8px', fontSize: '0.8rem', marginBottom: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Check size={15} /> {ownersModalSuccess}
+              </div>
+            )}
+
+            {/* Existing Owners List */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <h4 style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.65rem' }}>Registered Owners ({owners.length})</h4>
+              {owners.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: '8px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  No owners registered yet. Add one below.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '220px', overflowY: 'auto', paddingRight: '4px' }}>
+                  {owners.map(o => (
+                    <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.65rem 0.85rem', borderRadius: '10px', border: editingOwner?.id === o.id ? '2px solid var(--primary)' : '1px solid var(--border)', backgroundColor: editingOwner?.id === o.id ? 'var(--primary-light)' : 'var(--bg-app)', transition: 'all 0.15s' }}>
+                      <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.9rem', flexShrink: 0 }}>
+                        {(o.profile?.full_name || 'O').charAt(0).toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.875rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {o.profile?.full_name || 'Unknown'}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'flex', gap: '8px', marginTop: '1px' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                            <ShieldCheck size={10} style={{ color: o.verified ? 'var(--success)' : 'var(--warning)' }} />
+                            {o.verified ? 'Verified' : 'Unverified'}
+                          </span>
+                          <span>·</span>
+                          <span>{o.company_name || 'No company'}</span>
+                          {o.tax_id && (<><span>·</span><span>Tax: {o.tax_id}</span></>)}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          onClick={() => startOwnerEdit(o)}
+                          className="btn btn-secondary"
+                          style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '3px' }}
+                          title="Edit owner details"
+                        >
+                          <Edit2 size={11} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOwnerDelete(o.id, o.profile?.full_name || 'this owner')}
+                          className="btn btn-secondary"
+                          style={{ padding: '0.3rem 0.45rem', color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.25)' }}
+                          title="Delete owner"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Add / Edit Owner Form */}
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
+              <h4 style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.85rem' }}>
+                {editingOwner ? `Editing: ${editingOwner.profile?.full_name}` : 'Register New Owner'}
+              </h4>
+
+              {/* Mode toggle (only in create mode) */}
+              {!editingOwner && (
+                <div style={{ display: 'flex', gap: '0', marginBottom: '1rem', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
+                  <button
+                    type="button"
+                    onClick={() => setPromoteMode(false)}
+                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.78rem', fontWeight: 600, border: 'none', cursor: 'pointer', backgroundColor: !promoteMode ? 'var(--primary)' : 'transparent', color: !promoteMode ? 'white' : 'var(--text-secondary)', transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
+                  >
+                    <UserPlus size={13} /> Create New Profile
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPromoteMode(true)}
+                    style={{ flex: 1, padding: '0.5rem', fontSize: '0.78rem', fontWeight: 600, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', backgroundColor: promoteMode ? 'var(--primary)' : 'transparent', color: promoteMode ? 'white' : 'var(--text-secondary)', transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
+                  >
+                    <ArrowUpRight size={13} /> Promote Existing User
+                  </button>
+                </div>
+              )}
+
+              <form onSubmit={handleOwnerSubmit}>
+                {promoteMode && !editingOwner ? (
+                  <div className="form-group">
+                    <label className="form-label">Select Existing Profile to Promote *</label>
+                    {loadingProfiles ? (
+                      <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading profiles...</div>
+                    ) : (
+                      <select
+                        className="form-control"
+                        value={selectedProfileId}
+                        onChange={e => setSelectedProfileId(e.target.value)}
+                        required
+                      >
+                        <option value="">-- Select a user profile --</option>
+                        {profiles
+                          .filter(p => !owners.some(o => o.profile_id === p.id))
+                          .map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.full_name} ({p.role})
+                            </option>
+                          ))
+                        }
+                      </select>
+                    )}
+                  </div>
+                ) : !editingOwner ? (
+                  <div className="grid grid-2 gap-3">
+                    <div className="form-group">
+                      <label className="form-label">Full Name *</label>
+                      <input type="text" className="form-control" placeholder="John Peterson" value={newOwnerName} onChange={e => setNewOwnerName(e.target.value)} required />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Contact Phone</label>
+                      <input type="text" className="form-control" placeholder="+1 555-0100" value={newOwnerPhone} onChange={e => setNewOwnerPhone(e.target.value)} />
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid grid-2 gap-3">
+                  <div className="form-group">
+                    <label className="form-label">Company / Brand Name</label>
+                    <input type="text" className="form-control" placeholder="Peterson Properties Ltd" value={newOwnerCompanyName} onChange={e => setNewOwnerCompanyName(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Tax / Registration ID</label>
+                    <input type="text" className="form-control" placeholder="TX-998811" value={newOwnerTaxId} onChange={e => setNewOwnerTaxId(e.target.value)} />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                  {editingOwner && (
+                    <button type="button" className="btn btn-secondary" onClick={cancelOwnerEdit}>Cancel Edit</button>
+                  )}
+                  <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {editingOwner ? <><Check size={14} /> Save Changes</> : <><UserPlus size={14} /> {promoteMode ? 'Promote to Owner' : 'Register Owner'}</>}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}
