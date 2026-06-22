@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { api, isDemoMode } from '../lib/supabase';
 import type { Profile, UserRole } from '../types';
 import { format, parseISO } from 'date-fns';
-import { Users, X, UserPlus, ShieldAlert, Check, Trash2 } from 'lucide-react';
+import { Users, X, UserPlus, ShieldAlert, Check, Trash2, Eye, EyeOff } from 'lucide-react';
 
 export const StaffManagement: React.FC = () => {
   const { user } = useAuth();
@@ -15,6 +15,9 @@ export const StaffManagement: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<UserRole>('sales');
   const [phone, setPhone] = useState('');
   const [formError, setFormError] = useState('');
@@ -95,6 +98,9 @@ export const StaffManagement: React.FC = () => {
   const openModal = () => {
     setFullName('');
     setEmail('');
+    setUsername('');
+    setPassword('');
+    setShowPassword(false);
     setRole('sales');
     setPhone('');
     setFormError('');
@@ -113,18 +119,25 @@ export const StaffManagement: React.FC = () => {
     setFormError('');
     setFormSuccess('');
 
-    if (!fullName.trim() || !email.trim()) {
-      setFormError('Full Name and Email address are required.');
+    if (!fullName.trim() || !email.trim() || !username.trim() || !password.trim()) {
+      setFormError('All fields (Full Name, Email, Username, and Password) are required.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setFormError('Password must be at least 6 characters long.');
       return;
     }
 
     try {
-      await api.createStaffAccount(fullName, email, role, phone);
+      await api.createStaffAccount(fullName, email, role, phone, username.trim(), password);
       setFormSuccess(`Successfully registered ${fullName} as ${role}!`);
       
       // Clear inputs
       setFullName('');
       setEmail('');
+      setUsername('');
+      setPassword('');
       setPhone('');
       
       // Reload lists
@@ -334,6 +347,45 @@ export const StaffManagement: React.FC = () => {
                   disabled={!!formSuccess}
                   required
                 />
+              </div>
+
+              <div className="grid grid-2 gap-3">
+                <div className="form-group">
+                  <label className="form-label">Username *</label>
+                  <input 
+                    type="text" 
+                    className="form-control"
+                    placeholder="e.g. johndoe"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    disabled={!!formSuccess}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Password *</label>
+                  <div style={{ position: 'relative' }}>
+                    <input 
+                      type={showPassword ? 'text' : 'password'} 
+                      className="form-control"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      disabled={!!formSuccess}
+                      style={{ paddingRight: '2.5rem' }}
+                      required
+                    />
+                    <button 
+                      type="button" 
+                      onClick={() => setShowPassword(s => !s)}
+                      style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                      disabled={!!formSuccess}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-2 gap-3">

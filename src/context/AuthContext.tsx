@@ -65,11 +65,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const profiles = await api.getProfiles();
         const q = emailOrName.toLowerCase();
         let matched = profiles.find(p =>
+          (p.username && p.username.toLowerCase() === q) ||
+          (p.email && p.email.toLowerCase() === q) ||
           p.full_name.toLowerCase().includes(q) ||
           p.role === emailOrName ||
           p.id === emailOrName
         );
-        if (!matched) matched = profiles[0];
+        if (!matched) {
+          throw new Error('User profile not found in demo registry.');
+        }
+        if (matched.password && matched.password !== _role) {
+          throw new Error('Incorrect password for this demo account.');
+        }
         await api.switchUser(matched.id);
         setUser(matched);
         return matched;

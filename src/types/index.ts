@@ -6,6 +6,9 @@ export interface Profile {
   role: UserRole;
   phone?: string;
   created_at: string;
+  username?: string;
+  email?: string;
+  password?: string;
 }
 
 export interface PropertyOwner {

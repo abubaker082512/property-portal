@@ -497,17 +497,19 @@ export const api = {
     if (error) throw error;
   },
 
-  createStaffAccount: async (fullName: string, _email: string, role: UserRole, phone?: string): Promise<Profile> => {
+  createStaffAccount: async (fullName: string, email: string, role: UserRole, phone?: string, username?: string, password?: string): Promise<Profile> => {
     if (isDemoMode) {
       const profiles = getStorage<Profile[]>(MOCK_PROFILES_KEY, []);
       const newId = `u-staff-${Date.now()}`;
       
-      // Check if email already used as mock simple credentials
       const newStaff: Profile = {
         id: newId,
         full_name: fullName,
         role,
         phone,
+        email,
+        username,
+        password,
         created_at: new Date().toISOString()
       };
       
