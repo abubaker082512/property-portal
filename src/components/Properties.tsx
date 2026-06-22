@@ -4,7 +4,8 @@ import { api, supabase, isDemoMode } from '../lib/supabase';
 import type { Property, PropertyStatus, PropertyType, CommissionType, PropertyOwner, Profile } from '../types';
 import { 
   Building, Plus, Edit2, Trash2, X, Check, UserPlus,
-  MapPin, ChevronLeft, ChevronRight, Images, Upload, Loader, Users, ShieldCheck, ArrowUpRight
+  MapPin, ChevronLeft, ChevronRight, Images, Upload, Loader, Users, ShieldCheck, ArrowUpRight,
+  Link2, Sparkles, AlertCircle, ExternalLink
 } from 'lucide-react';
 
 const AMENITIES_LIST = [
@@ -98,6 +99,27 @@ export const Properties: React.FC = () => {
   
   const [formError, setFormError] = useState('');
   const [uploading, setUploading] = useState(false);
+
+  // ── Airbnb Import Modal States ──────────────────────────────────────────────
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [importPreview, setImportPreview] = useState<{
+    title: string;
+    description: string;
+    city: string;
+    country: string;
+    address: string;
+    bedrooms: string;
+    bathrooms: string;
+    maxGuests: string;
+    pricePerNight: string;
+    propertyType: string;
+    images: string[];
+    amenities: string[];
+    sourceUrl: string;
+  } | null>(null);
 
   const fetchProfilesForOwners = async () => {
     try {
@@ -206,6 +228,207 @@ export const Properties: React.FC = () => {
     setNewOwnerTaxId(o.tax_id || '');
     setNewOwnerPhone(o.profile?.phone || '');
     setPromoteMode(false);
+  };
+
+  // ── Airbnb Scraper ──────────────────────────────────────────────────────────
+  const scrapeAirbnbListing = async () => {
+    const url = importUrl.trim();
+    if (!url) { setImportError('Please paste an Airbnb listing URL.'); return; }
+
+    // Validate it looks like an Airbnb URL
+    if (!url.includes('airbnb.') && !url.includes('abnb.me')) {
+      setImportError('Please enter a valid Airbnb listing URL (e.g. https://www.airbnb.com/rooms/12345).');
+      return;
+    }
+
+    setImportLoading(true);
+    setImportError('');
+    setImportPreview(null);
+
+    try {
+      // Fetch through CORS proxy — allorigins wraps response in { contents: "..." }
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
+      const json = await res.json();
+      const html: string = json.contents || '';
+
+      if (!html || html.length < 200) {
+        throw new Error('Could not retrieve listing data. Airbnb may have blocked the request. Try again or fill manually.');
+      }
+
+      // --- Parse with DOMParser ---
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+
+      const getOg = (prop: string) =>
+        doc.querySelector(`meta[property="${prop}"]`)?.getAttribute('content') ||
+        doc.querySelector(`meta[name="${prop}"]`)?.getAttribute('content') || '';
+
+      // --- Title ---
+      let title = getOg('og:title') || doc.title || '';
+      // Strip " - Airbnb" suffixes
+      title = title.replace(/\s*[-|]\s*Airbnb.*$/i, '').trim();
+
+      // --- Description ---
+      const description = getOg('og:description') ||
+        getOg('description') || '';
+
+      // --- Images (collect all og:image tags) ---
+      const imageNodes = doc.querySelectorAll('meta[property="og:image"], meta[property="og:image:secure_url"]');
+      const images: string[] = [];
+      imageNodes.forEach(node => {
+        const src = node.getAttribute('content') || '';
+        if (src && !images.includes(src)) images.push(src);
+      });
+
+      // --- Location from og:title or URL slug ---
+      let city = '';
+      let country = '';
+      let address = '';
+
+      // Try JSON-LD structured data first
+      let jsonLd: any = null;
+      const ldScripts = doc.querySelectorAll('script[type="application/ld+json"]');
+      ldScripts.forEach(script => {
+        if (jsonLd) return;
+        try {
+          const parsed = JSON.parse(script.textContent || '');
+          if (parsed['@type'] === 'LodgingBusiness' || parsed['@type'] === 'Product' || parsed.address) {
+            jsonLd = parsed;
+          }
+          // Sometimes it's an array
+          if (Array.isArray(parsed)) {
+            const found = parsed.find((p: any) => p.address || p['@type'] === 'LodgingBusiness');
+            if (found) jsonLd = found;
+          }
+        } catch { /* ignore */ }
+      });
+
+      if (jsonLd?.address) {
+        city    = jsonLd.address.addressLocality || jsonLd.address.addressRegion || '';
+        country = jsonLd.address.addressCountry || '';
+        address = jsonLd.address.streetAddress || '';
+      }
+
+      // Fallback: parse city/country from og:title ("Property Name in City, Country")
+      if (!city) {
+        const titleMatch = title.match(/\bin\s+([\w\s]+?)(?:,\s*([\w\s]+))?$/i);
+        if (titleMatch) {
+          city    = titleMatch[1]?.trim() || '';
+          country = titleMatch[2]?.trim() || '';
+        }
+      }
+
+      // --- Bedrooms / Bathrooms / Guests from JSON-LD or description ---
+      let bedrooms    = jsonLd?.numberOfRooms ? String(jsonLd.numberOfRooms) : '';
+      let bathrooms   = '';
+      let maxGuests   = jsonLd?.amenityFeature?.find((f: any) => /guest/i.test(f.name))?.value || '';
+      let pricePerNight = '';
+
+      // Try to parse from description text
+      if (!bedrooms) {
+        const bedMatch = description.match(/(\d+)\s*bed(?:room)?s?/i);
+        if (bedMatch) bedrooms = bedMatch[1];
+      }
+      const bathMatch = description.match(/(\d+(?:\.\d+)?)\s*bath(?:room)?s?/i);
+      if (bathMatch) bathrooms = bathMatch[1];
+      if (!maxGuests) {
+        const guestMatch = description.match(/(\d+)\s*guests?/i);
+        if (guestMatch) maxGuests = guestMatch[1];
+      }
+
+      // Try to extract price from meta or text
+      const priceMetaStr = getOg('product:price:amount') || getOg('price');
+      if (priceMetaStr) pricePerNight = String(Math.round(parseFloat(priceMetaStr)));
+      if (!pricePerNight) {
+        const priceMatch = html.match(/"price"\s*:\s*"?([\d.]+)"?/);
+        if (priceMatch) pricePerNight = String(Math.round(parseFloat(priceMatch[1])));
+      }
+
+      // --- Property Type from title/description ---
+      const lower = `${title} ${description}`.toLowerCase();
+      let propertyType = 'apartment';
+      if (/\bvilla\b/.test(lower))   propertyType = 'villa';
+      else if (/\bcabin\b/.test(lower))  propertyType = 'cabin';
+      else if (/\bcottage\b/.test(lower)) propertyType = 'cottage';
+      else if (/\bhouse\b|\bhome\b/.test(lower)) propertyType = 'house';
+      else if (/\bcondo\b/.test(lower)) propertyType = 'condo';
+
+      // --- Amenities matching from description ---
+      const amenities: string[] = [];
+      const amenityKeywords: Record<string, string> = {
+        wifi: 'WiFi', pool: 'Pool', 'air condition': 'Air Conditioning',
+        'hot tub': 'Hot Tub', kitchen: 'Kitchen', fireplace: 'Fireplace',
+        gym: 'Gym', parking: 'Parking', beach: 'Beach View',
+        'pet': 'Pet Friendly', balcony: 'Balcony', elevator: 'Elevator'
+      };
+      Object.entries(amenityKeywords).forEach(([keyword, label]) => {
+        if (lower.includes(keyword)) amenities.push(label);
+      });
+
+      setImportPreview({
+        title: title || 'Imported Airbnb Listing',
+        description,
+        city,
+        country,
+        address,
+        bedrooms:     bedrooms || '1',
+        bathrooms:    bathrooms || '1',
+        maxGuests:    maxGuests || '2',
+        pricePerNight: pricePerNight || '',
+        propertyType,
+        images:    images.slice(0, 8),
+        amenities,
+        sourceUrl: url
+      });
+
+    } catch (err: any) {
+      console.error('Airbnb scrape error:', err);
+      setImportError(
+        err.name === 'TimeoutError'
+          ? 'Request timed out. Airbnb may be slow or blocking. Try again.'
+          : err.message || 'Failed to fetch listing data.'
+      );
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const applyImportedData = () => {
+    if (!importPreview) return;
+    // Reset the property form and fill with scraped data
+    setEditingProperty(null);
+    setTitle(importPreview.title);
+    setDescription(importPreview.description);
+    setAddress(importPreview.address);
+    setCity(importPreview.city);
+    setState('');
+    setCountry(importPreview.country);
+    setZipCode('');
+    setCurrency('USD');
+    setPricePerNight(importPreview.pricePerNight);
+    setCommissionType('percentage');
+    setCommissionValue('10');
+    setPropertyType(importPreview.propertyType as any);
+    setBedrooms(importPreview.bedrooms);
+    setBathrooms(importPreview.bathrooms);
+    setMaxGuests(importPreview.maxGuests);
+    setStatus('listed');
+    setSelectedAmenities(importPreview.amenities);
+    setImageUrls(importPreview.images);
+    setFormError('');
+    if (user?.role === 'owner') {
+      const matchOwner = owners.find(o => o.profile_id === user.id);
+      setOwnerId(matchOwner?.id || '');
+    } else {
+      setOwnerId(owners[0]?.id || '');
+    }
+    // Close import modal and open property form
+    setImportModalOpen(false);
+    setImportPreview(null);
+    setImportUrl('');
+    setModalOpen(true);
   };
 
   const cancelOwnerEdit = () => {
@@ -473,7 +696,7 @@ export const Properties: React.FC = () => {
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Create and manage property cards, pricing, and commissions.</p>
         </div>
         
-        <div className="flex gap-2">
+        <div className="flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {(user?.role === 'admin' || user?.role === 'super_admin') && (
             <button
               className="btn btn-secondary"
@@ -482,6 +705,13 @@ export const Properties: React.FC = () => {
               <Users size={18} /> Manage Owners
             </button>
           )}
+          <button
+            className="btn btn-secondary"
+            onClick={() => { setImportModalOpen(true); setImportUrl(''); setImportError(''); setImportPreview(null); }}
+            style={{ background: 'linear-gradient(135deg, #ff5a5f22, #fc642d22)', borderColor: '#ff5a5f55', color: '#ff5a5f', fontWeight: 700 }}
+          >
+            <Link2 size={16} /> Import from Airbnb
+          </button>
           <button className="btn btn-primary" onClick={openNewModal}>
             <Plus size={18} /> Add Property
           </button>
@@ -1209,6 +1439,169 @@ export const Properties: React.FC = () => {
                 </div>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════ AIRBNB IMPORT MODAL ═══════════════════ */}
+      {importModalOpen && (
+        <div className="modal-overlay" onClick={() => setImportModalOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '660px' }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ background: 'linear-gradient(135deg,#ff5a5f,#fc642d)', borderRadius: '8px', padding: '4px 8px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                    <Link2 size={14} style={{ color: 'white' }} />
+                    <span style={{ color: 'white', fontSize: '0.8rem', fontWeight: 800, letterSpacing: '0.02em' }}>AIRBNB</span>
+                  </span>
+                  Import Listing
+                </h3>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  Paste an Airbnb listing URL to auto-fill the property form. Review extracted data before saving.
+                </p>
+              </div>
+              <button onClick={() => setImportModalOpen(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* URL Input Step */}
+            {!importPreview && (
+              <>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <input
+                    type="url"
+                    className="form-control"
+                    style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}
+                    placeholder="https://www.airbnb.com/rooms/12345678"
+                    value={importUrl}
+                    onChange={e => { setImportUrl(e.target.value); setImportError(''); }}
+                    onKeyDown={e => e.key === 'Enter' && scrapeAirbnbListing()}
+                    autoFocus
+                  />
+                  <button
+                    className="btn btn-primary"
+                    onClick={scrapeAirbnbListing}
+                    disabled={importLoading || !importUrl.trim()}
+                    style={{ whiteSpace: 'nowrap', minWidth: '110px', background: 'linear-gradient(135deg,#ff5a5f,#fc642d)', border: 'none' }}
+                  >
+                    {importLoading ? <><Loader size={14} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} /> Fetching…</> : <><Sparkles size={14} /> Extract Data</>}
+                  </button>
+                </div>
+
+                {importError && (
+                  <div style={{ marginTop: '0.75rem', padding: '0.65rem 0.85rem', backgroundColor: 'var(--danger-light)', color: 'var(--danger)', borderRadius: '8px', fontSize: '0.8rem', fontWeight: 600, display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                    <AlertCircle size={15} style={{ flexShrink: 0, marginTop: '1px' }} />
+                    <span>{importError}</span>
+                  </div>
+                )}
+
+                {importLoading && (
+                  <div style={{ marginTop: '1.25rem', padding: '1.5rem', border: '1px dashed var(--border)', borderRadius: '12px', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem' }}>
+                      <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'linear-gradient(135deg,#ff5a5f22,#fc642d22)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Loader size={20} style={{ color: '#ff5a5f', animation: 'spin 1s linear infinite' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>Fetching Airbnb listing…</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>Extracting title, photos, amenities and location details</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: '1.25rem', padding: '0.85rem 1rem', background: 'var(--bg-app)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>How it works</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    {[
+                      ['1', 'Copy any Airbnb listing URL from your browser'],
+                      ['2', 'Paste it above and click Extract Data'],
+                      ['3', 'Review the auto-filled details in the preview'],
+                      ['4', 'Click Import — the property form opens pre-filled'],
+                      ['5', 'Set price, commission, owner & publish']
+                    ].map(([n, text]) => (
+                      <div key={n} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        <span style={{ width: '18px', height: '18px', borderRadius: '50%', background: 'linear-gradient(135deg,#ff5a5f,#fc642d)', color: 'white', fontSize: '0.65rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{n}</span>
+                        {text}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Preview Step */}
+            {importPreview && (
+              <>
+                {/* Success banner */}
+                <div style={{ padding: '0.65rem 0.85rem', backgroundColor: 'var(--success-light)', color: 'var(--success)', borderRadius: '8px', fontSize: '0.8rem', fontWeight: 600, display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '1rem' }}>
+                  <Check size={14} /> Data extracted successfully! Review below then click Import.
+                </div>
+
+                {/* Images preview strip */}
+                {importPreview.images.length > 0 && (
+                  <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', marginBottom: '1rem', paddingBottom: '4px' }}>
+                    {importPreview.images.slice(0, 6).map((img, i) => (
+                      <div key={i} style={{ position: 'relative', flexShrink: 0, width: '90px', height: '68px', borderRadius: '8px', overflow: 'hidden', border: i === 0 ? '2px solid #ff5a5f' : '1px solid var(--border)' }}>
+                        <img src={img} alt={`preview-${i}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        {i === 0 && <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: '#ff5a5f', color: 'white', fontSize: '0.55rem', fontWeight: 800, textAlign: 'center', padding: '1px' }}>COVER</div>}
+                      </div>
+                    ))}
+                    {importPreview.images.length > 6 && (
+                      <div style={{ flexShrink: 0, width: '90px', height: '68px', borderRadius: '8px', border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>+{importPreview.images.length - 6} more</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Extracted data grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem' }}>
+                  {[
+                    ['Listing Title', importPreview.title],
+                    ['Location', [importPreview.city, importPreview.country].filter(Boolean).join(', ') || '—'],
+                    ['Property Type', importPreview.propertyType],
+                    ['Nightly Price', importPreview.pricePerNight ? `$${importPreview.pricePerNight}` : 'Not found (set manually)'],
+                    ['Bedrooms / Baths', `${importPreview.bedrooms} bed · ${importPreview.bathrooms} bath`],
+                    ['Max Guests', importPreview.maxGuests || '—'],
+                    ['Photos', `${importPreview.images.length} extracted`],
+                    ['Amenities', importPreview.amenities.length > 0 ? importPreview.amenities.slice(0, 3).join(', ') + (importPreview.amenities.length > 3 ? `… +${importPreview.amenities.length - 3}` : '') : 'None detected'],
+                  ].map(([label, value]) => (
+                    <div key={label} style={{ padding: '0.55rem 0.75rem', background: 'var(--bg-app)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>{label}</div>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Source URL */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                  <ExternalLink size={11} />
+                  <a href={importPreview.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#ff5a5f', fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '2px', wordBreak: 'break-all' }}>
+                    {importPreview.sourceUrl}
+                  </a>
+                </div>
+
+                {/* Warning note */}
+                <div style={{ padding: '0.6rem 0.85rem', background: 'var(--warning-light)', color: 'var(--warning)', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <AlertCircle size={13} /> Some fields (price, exact address) may not be extracted. Please review and complete the form before publishing.
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-secondary" onClick={() => { setImportPreview(null); setImportError(''); }}>
+                    ← Try Another URL
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={applyImportedData}
+                    style={{ background: 'linear-gradient(135deg,#ff5a5f,#fc642d)', border: 'none', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Sparkles size={14} /> Import & Open Form
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
