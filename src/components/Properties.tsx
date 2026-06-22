@@ -270,125 +270,129 @@ export const Properties: React.FC = () => {
       // Strip " - Airbnb" suffixes
       title = title.replace(/\s*[-|]\s*Airbnb.*$/i, '').trim();
 
-      // --- Description ---
-      const description = getOg('og:description') ||
-        getOg('description') || '';
+      // Description
+      const description = getOg('og:description') || getOg('description') || '';
 
-      // --- Images (collect all og:image tags) ---
-      const imageNodes = doc.querySelectorAll('meta[property="og:image"], meta[property="og:image:secure_url"]');
+      // Images
       const images: string[] = [];
-      imageNodes.forEach(node => {
-        const src = node.getAttribute('content') || '';
+      doc.querySelectorAll('meta[property="og:image"], meta[property="og:image:secure_url"]').forEach(n => {
+        const src = n.getAttribute('content') || '';
         if (src && !images.includes(src)) images.push(src);
       });
+      doc.querySelectorAll('img[src*="muscache.com"], img[src*="airbnb"]').forEach(n => {
+        const src = n.getAttribute('src') || '';
+        if (src && !images.includes(src) && src.startsWith('http')) images.push(src);
+      });
 
-      // --- Location from og:title or URL slug ---
-      let city = '';
-      let country = '';
-      let address = '';
-
-      // Try JSON-LD structured data first
+      // ── JSON-LD ───────────────────────────────────────────────────────────
       let jsonLd: any = null;
-      const ldScripts = doc.querySelectorAll('script[type="application/ld+json"]');
-      ldScripts.forEach(script => {
+      doc.querySelectorAll('script[type="application/ld+json"]').forEach(script => {
         if (jsonLd) return;
         try {
           const parsed = JSON.parse(script.textContent || '');
-          if (parsed['@type'] === 'LodgingBusiness' || parsed['@type'] === 'Product' || parsed.address) {
-            jsonLd = parsed;
-          }
-          // Sometimes it's an array
+          if (parsed['@type'] === 'LodgingBusiness' || parsed.address) { jsonLd = parsed; return; }
           if (Array.isArray(parsed)) {
             const found = parsed.find((p: any) => p.address || p['@type'] === 'LodgingBusiness');
             if (found) jsonLd = found;
           }
-        } catch { /* ignore */ }
+        } catch { /* skip */ }
       });
 
-      if (jsonLd?.address) {
-        city    = jsonLd.address.addressLocality || jsonLd.address.addressRegion || '';
-        country = jsonLd.address.addressCountry || '';
-        address = jsonLd.address.streetAddress || '';
-      }
-
-      // Fallback: parse city/country from og:title ("Property Name in City, Country")
-      if (!city) {
-        const titleMatch = title.match(/\bin\s+([\w\s]+?)(?:,\s*([\w\s]+))?$/i);
-        if (titleMatch) {
-          city    = titleMatch[1]?.trim() || '';
-          country = titleMatch[2]?.trim() || '';
+      // ── Mine Airbnb embedded JS data blobs ───────────────────────────────
+      let embeddedData: any = null;
+      const scriptTags = Array.from(doc.querySelectorAll('script:not([src])'));
+      for (const s of scriptTags) {
+        const text = s.textContent || '';
+        const match = text.match(/"listing"\s*:\s*(\{[^<]{50,})/);
+        if (match) {
+          try {
+            let depth = 0, start = match.index! + match[0].indexOf('{'), end = start;
+            for (; end < text.length; end++) {
+              if (text[end] === '{') depth++;
+              else if (text[end] === '}') { depth--; if (depth === 0) break; }
+            }
+            embeddedData = JSON.parse(text.slice(start, end + 1));
+            if (embeddedData) break;
+          } catch { /* skip */ }
         }
       }
 
-      // --- Bedrooms / Bathrooms / Guests from JSON-LD or description ---
-      let bedrooms    = jsonLd?.numberOfRooms ? String(jsonLd.numberOfRooms) : '';
-      let bathrooms   = '';
-      let maxGuests   = jsonLd?.amenityFeature?.find((f: any) => /guest/i.test(f.name))?.value || '';
+      // ── Extract fields ────────────────────────────────────────────────────
+      let city    = jsonLd?.address?.addressLocality || jsonLd?.address?.addressRegion || '';
+      let country = jsonLd?.address?.addressCountry || '';
+      let address = jsonLd?.address?.streetAddress || '';
+
+      if (embeddedData) {
+        city    = city    || embeddedData.city || embeddedData.public_address || '';
+        country = country || embeddedData.country_name || embeddedData.country || '';
+        address = address || embeddedData.public_address || '';
+      }
+
+      if (!city) {
+        const m = title.match(/\bin\s+([\w\s]+?)(?:,\s*([\w\s]+))?$/i);
+        if (m) { city = m[1]?.trim() || ''; country = m[2]?.trim() || ''; }
+      }
+
+      let bedrooms  = jsonLd?.numberOfRooms ? String(jsonLd.numberOfRooms) : String(embeddedData?.bedrooms || '');
+      let bathrooms = String(embeddedData?.bathrooms || '');
+      let maxGuests = String(embeddedData?.person_capacity || embeddedData?.guests_included || '');
+
+      const searchText = `${description} ${title}`;
+      if (!bedrooms)  { const m = searchText.match(/(\d+)\s*bed(?:room)?s?/i);            if (m) bedrooms  = m[1]; }
+      if (!bathrooms) { const m = searchText.match(/(\d+(?:\.\d+)?)\s*bath(?:room)?s?/i); if (m) bathrooms = m[1]; }
+      if (!maxGuests) { const m = searchText.match(/(\d+)\s*guests?/i);                   if (m) maxGuests = m[1]; }
+
       let pricePerNight = '';
-
-      // Try to parse from description text
-      if (!bedrooms) {
-        const bedMatch = description.match(/(\d+)\s*bed(?:room)?s?/i);
-        if (bedMatch) bedrooms = bedMatch[1];
-      }
-      const bathMatch = description.match(/(\d+(?:\.\d+)?)\s*bath(?:room)?s?/i);
-      if (bathMatch) bathrooms = bathMatch[1];
-      if (!maxGuests) {
-        const guestMatch = description.match(/(\d+)\s*guests?/i);
-        if (guestMatch) maxGuests = guestMatch[1];
-      }
-
-      // Try to extract price from meta or text
-      const priceMetaStr = getOg('product:price:amount') || getOg('price');
-      if (priceMetaStr) pricePerNight = String(Math.round(parseFloat(priceMetaStr)));
+      const priceMeta = getOg('product:price:amount') || getOg('price');
+      if (priceMeta) pricePerNight = String(Math.round(parseFloat(priceMeta)));
+      if (!pricePerNight && embeddedData?.price) pricePerNight = String(Math.round(parseFloat(String(embeddedData.price))));
       if (!pricePerNight) {
-        const priceMatch = html.match(/"price"\s*:\s*"?([\d.]+)"?/);
-        if (priceMatch) pricePerNight = String(Math.round(parseFloat(priceMatch[1])));
+        const m = html.match(/"price"\s*:\s*"?([\d.]+)"?/);
+        if (m) pricePerNight = String(Math.round(parseFloat(m[1])));
       }
 
-      // --- Property Type from title/description ---
       const lower = `${title} ${description}`.toLowerCase();
       let propertyType = 'apartment';
-      if (/\bvilla\b/.test(lower))   propertyType = 'villa';
-      else if (/\bcabin\b/.test(lower))  propertyType = 'cabin';
-      else if (/\bcottage\b/.test(lower)) propertyType = 'cottage';
+      if (/\bvilla\b/.test(lower))              propertyType = 'villa';
+      else if (/\bcabin\b/.test(lower))         propertyType = 'cabin';
+      else if (/\bcottage\b/.test(lower))       propertyType = 'cottage';
       else if (/\bhouse\b|\bhome\b/.test(lower)) propertyType = 'house';
-      else if (/\bcondo\b/.test(lower)) propertyType = 'condo';
+      else if (/\bcondo\b/.test(lower))         propertyType = 'condo';
 
-      // --- Amenities matching from description ---
       const amenities: string[] = [];
-      const amenityKeywords: Record<string, string> = {
+      const amenityMap: Record<string, string> = {
         wifi: 'WiFi', pool: 'Pool', 'air condition': 'Air Conditioning',
         'hot tub': 'Hot Tub', kitchen: 'Kitchen', fireplace: 'Fireplace',
         gym: 'Gym', parking: 'Parking', beach: 'Beach View',
         'pet': 'Pet Friendly', balcony: 'Balcony', elevator: 'Elevator'
       };
-      Object.entries(amenityKeywords).forEach(([keyword, label]) => {
-        if (lower.includes(keyword)) amenities.push(label);
+      const scanText = lower + ' ' + html.substring(0, 80000).toLowerCase();
+      Object.entries(amenityMap).forEach(([kw, label]) => {
+        if (scanText.includes(kw)) amenities.push(label);
       });
 
       setImportPreview({
-        title: title || 'Imported Airbnb Listing',
+        title:         title || 'Imported Airbnb Listing',
         description,
         city,
         country,
         address,
-        bedrooms:     bedrooms || '1',
-        bathrooms:    bathrooms || '1',
-        maxGuests:    maxGuests || '2',
+        bedrooms:      String(bedrooms  || '1'),
+        bathrooms:     String(bathrooms || '1'),
+        maxGuests:     String(maxGuests || '2'),
         pricePerNight: pricePerNight || '',
         propertyType,
-        images:    images.slice(0, 8),
+        images:        images.slice(0, 8),
         amenities,
-        sourceUrl: url
+        sourceUrl:     url
       });
 
     } catch (err: any) {
       console.error('Airbnb scrape error:', err);
-      setImportError(
-        err.name === 'TimeoutError'
-          ? 'Request timed out. Airbnb may be slow or blocking. Try again.'
-          : err.message || 'Failed to fetch listing data.'
+      const msg = err.message || 'Failed to fetch listing data.';
+      setImportError(err.name === 'AbortError' || msg.includes('AbortError')
+        ? 'Request timed out. Airbnb may be slow. Please try again.'
+        : msg
       );
     } finally {
       setImportLoading(false);
