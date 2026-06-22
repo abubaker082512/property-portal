@@ -235,7 +235,6 @@ export const Properties: React.FC = () => {
     const url = importUrl.trim();
     if (!url) { setImportError('Please paste an Airbnb listing URL.'); return; }
 
-    // Validate it looks like an Airbnb URL
     if (!url.includes('airbnb.') && !url.includes('abnb.me')) {
       setImportError('Please enter a valid Airbnb listing URL (e.g. https://www.airbnb.com/rooms/12345).');
       return;
@@ -245,141 +244,196 @@ export const Properties: React.FC = () => {
     setImportError('');
     setImportPreview(null);
 
-    try {
-      // Fetch through CORS proxy — allorigins wraps response in { contents: "..." }
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
-      if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
-      const json = await res.json();
-      const html: string = json.contents || '';
+    // Shared timeout-aware fetch helper
+    const fetchT = async (fetchUrl: string, ms: number, opts?: RequestInit): Promise<Response> => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), ms);
+      try {
+        const r = await fetch(fetchUrl, { ...opts, signal: ctrl.signal });
+        clearTimeout(t);
+        return r;
+      } catch (e) { clearTimeout(t); throw e; }
+    };
 
-      if (!html || html.length < 200) {
-        throw new Error('Could not retrieve listing data. Airbnb may have blocked the request. Try again or fill manually.');
+    // Shared helpers
+    const AMENITY_MAP: Record<string, string> = {
+      wifi: 'WiFi', pool: 'Pool', 'air condition': 'Air Conditioning',
+      'hot tub': 'Hot Tub', kitchen: 'Kitchen', fireplace: 'Fireplace',
+      gym: 'Gym', parking: 'Parking', beach: 'Beach View',
+      pet: 'Pet Friendly', balcony: 'Balcony', elevator: 'Elevator'
+    };
+    const detectAmenities = (text: string) => {
+      const lower = text.toLowerCase();
+      return Object.entries(AMENITY_MAP)
+        .filter(([kw]) => lower.includes(kw))
+        .map(([, label]) => label)
+        .filter((v, i, a) => a.indexOf(v) === i);
+    };
+    const detectType = (text: string) => {
+      const l = text.toLowerCase();
+      if (/\bvilla\b/.test(l)) return 'villa';
+      if (/\bcabin\b/.test(l)) return 'cabin';
+      if (/\bcottage\b/.test(l)) return 'cottage';
+      if (/\bhouse\b|\bhome\b/.test(l)) return 'house';
+      if (/\bcondo\b/.test(l)) return 'condo';
+      return 'apartment';
+    };
+
+    try {
+      let title = '', description = '', city = '', country = '', address = '';
+      let bedrooms = '', bathrooms = '', maxGuests = '', pricePerNight = '';
+      let propertyType = 'apartment';
+      let images: string[] = [];
+      let amenities: string[] = [];
+
+      // ── Method 1: Airbnb internal JSON API (no HTML parsing needed) ────────
+      const listingId = url.match(/\/rooms\/(\d+)/)?.[1];
+      if (listingId) {
+        try {
+          const apiUrl = `https://www.airbnb.com/api/v2/listings/${listingId}?key=d306zoyjsyarp7ifhu67rjxn52tv0t20&_format=v1_legacy_for_p3&locale=en&currency=USD`;
+          const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+          const res = await fetchT(proxyUrl, 10000);
+          if (res.ok) {
+            const j = await res.json();
+            const listing = JSON.parse(j.contents || '{}').listing;
+            if (listing?.name) {
+              title       = listing.name;
+              description = listing.description || listing.summary || listing.space || '';
+              city        = listing.city || listing.locale_city || '';
+              country     = listing.country || listing.country_name || '';
+              address     = listing.public_address || '';
+              bedrooms    = String(listing.bedrooms || '');
+              bathrooms   = String(listing.bathrooms || '');
+              maxGuests   = String(listing.person_capacity || '');
+              const rawPrice = listing.price || '';
+              pricePerNight = rawPrice ? String(Math.round(parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')))) : '';
+              propertyType  = detectType(`${listing.name} ${listing.room_type_category || ''}`);
+              const pics = listing.photos || listing.listing_images || [];
+              images = pics.slice(0, 8).map((p: any) => p.xl_picture_url || p.picture_url || p.picture || '').filter(Boolean);
+              amenities = detectAmenities(description + ' ' + (listing.amenities || []).join(' '));
+            }
+          }
+        } catch { /* fall through to next method */ }
       }
 
-      // --- Parse with DOMParser ---
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-
-      const getOg = (prop: string) =>
-        doc.querySelector(`meta[property="${prop}"]`)?.getAttribute('content') ||
-        doc.querySelector(`meta[name="${prop}"]`)?.getAttribute('content') || '';
-
-      // --- Title ---
-      let title = getOg('og:title') || doc.title || '';
-      // Strip " - Airbnb" suffixes
-      title = title.replace(/\s*[-|]\s*Airbnb.*$/i, '').trim();
-
-      // Description
-      const description = getOg('og:description') || getOg('description') || '';
-
-      // Images
-      const images: string[] = [];
-      doc.querySelectorAll('meta[property="og:image"], meta[property="og:image:secure_url"]').forEach(n => {
-        const src = n.getAttribute('content') || '';
-        if (src && !images.includes(src)) images.push(src);
-      });
-      doc.querySelectorAll('img[src*="muscache.com"], img[src*="airbnb"]').forEach(n => {
-        const src = n.getAttribute('src') || '';
-        if (src && !images.includes(src) && src.startsWith('http')) images.push(src);
-      });
-
-      // ── JSON-LD ───────────────────────────────────────────────────────────
-      let jsonLd: any = null;
-      doc.querySelectorAll('script[type="application/ld+json"]').forEach(script => {
-        if (jsonLd) return;
+      // ── Method 2: Jina AI Reader — renders JS, bypasses bot protection ─────
+      if (!title) {
         try {
-          const parsed = JSON.parse(script.textContent || '');
-          if (parsed['@type'] === 'LodgingBusiness' || parsed.address) { jsonLd = parsed; return; }
-          if (Array.isArray(parsed)) {
-            const found = parsed.find((p: any) => p.address || p['@type'] === 'LodgingBusiness');
-            if (found) jsonLd = found;
-          }
-        } catch { /* skip */ }
-      });
+          const jinaUrl = `https://r.jina.ai/${url}`;
+          const res = await fetchT(jinaUrl, 20000, { headers: { 'X-Timeout': '15', 'Accept': 'text/plain' } });
+          if (res.ok) {
+            const text = await res.text();
 
-      // ── Mine Airbnb embedded JS data blobs ───────────────────────────────
-      let embeddedData: any = null;
-      const scriptTags = Array.from(doc.querySelectorAll('script:not([src])'));
-      for (const s of scriptTags) {
-        const text = s.textContent || '';
-        const match = text.match(/"listing"\s*:\s*(\{[^<]{50,})/);
-        if (match) {
-          try {
-            let depth = 0, start = match.index! + match[0].indexOf('{'), end = start;
-            for (; end < text.length; end++) {
-              if (text[end] === '{') depth++;
-              else if (text[end] === '}') { depth--; if (depth === 0) break; }
+            // Title — first heading-like line
+            const lines = text.split('\n').map(l => l.replace(/^[#*>\s-]+/, '').trim()).filter(Boolean);
+            title = (lines[0] || '').replace(/\s*[-|]\s*Airbnb.*$/i, '').trim();
+
+            // Guests · Bedrooms · Bathrooms (Airbnb standard format)
+            const specsLine = text.match(/(\d+)\s*guests?\s*[·•]\s*(\d+)\s*bedroom/i);
+            if (specsLine) { maxGuests = specsLine[1]; bedrooms = specsLine[2]; }
+            const bedsM   = text.match(/(\d+)\s*bed(?:room)?s?\b/i);
+            const bathsM  = text.match(/(\d+(?:\.\d+)?)\s*bath(?:room)?s?\b/i);
+            const guestsM = text.match(/(\d+)\s*guests?\b/i);
+            if (!bedrooms  && bedsM)   bedrooms  = bedsM[1];
+            if (!bathrooms && bathsM)  bathrooms = bathsM[1];
+            if (!maxGuests && guestsM) maxGuests = guestsM[1];
+
+            // Price — "$X / night" or "$X night"
+            const priceM = text.match(/\$\s*([\d,]+)\s*(?:\/\s*night|per\s*night|night)/i);
+            if (priceM) pricePerNight = priceM[1].replace(/,/g, '');
+
+            // Location
+            const locM = text.match(/(?:in|,)\s*([A-Z][a-z\s]+?),\s*([A-Z][a-z\s]+?)(?:\n|\.|\|)/);
+            if (locM) { city = locM[1].trim(); country = locM[2].trim(); }
+
+            // Description — grab a meaningful block of text
+            const bodyStart = text.indexOf('\n\n', text.indexOf(title) + title.length);
+            if (bodyStart > 0) {
+              description = text.slice(bodyStart, bodyStart + 1200).trim().replace(/^[\s\n#>*-]+/, '');
             }
-            embeddedData = JSON.parse(text.slice(start, end + 1));
-            if (embeddedData) break;
-          } catch { /* skip */ }
+
+            propertyType = detectType(text);
+            amenities    = detectAmenities(text);
+          }
+        } catch { /* fall through to next method */ }
+      }
+
+      // ── Method 3: HTML CORS proxies (last resort) ──────────────────────────
+      if (!title) {
+        const PROXIES = [
+          {
+            build: (u: string) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+            extract: async (r: Response) => { const j = await r.json(); return (j.contents as string) || ''; }
+          },
+          {
+            build: (u: string) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+            extract: async (r: Response) => r.text()
+          }
+        ];
+
+        let html = '';
+        for (const p of PROXIES) {
+          try {
+            const r = await fetchT(p.build(url), 12000);
+            if (r.ok) { const t = await p.extract(r); if (t.length > 500) { html = t; break; } }
+          } catch { continue; }
+        }
+
+        if (html.length > 300) {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          const getOg = (prop: string) =>
+            doc.querySelector(`meta[property="${prop}"]`)?.getAttribute('content') ||
+            doc.querySelector(`meta[name="${prop}"]`)?.getAttribute('content') || '';
+
+          title       = (getOg('og:title') || doc.title || '').replace(/\s*[-|]\s*Airbnb.*$/i, '').trim();
+          description = getOg('og:description') || '';
+
+          doc.querySelectorAll('meta[property="og:image"], meta[property="og:image:secure_url"]').forEach(n => {
+            const src = n.getAttribute('content') || '';
+            if (src && !images.includes(src)) images.push(src);
+          });
+
+          let jsonLd: any = null;
+          doc.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
+            if (jsonLd) return;
+            try {
+              const p = JSON.parse(s.textContent || '');
+              if (p['@type'] === 'LodgingBusiness' || p.address) jsonLd = p;
+            } catch {}
+          });
+          if (jsonLd?.address) {
+            city    = jsonLd.address.addressLocality || jsonLd.address.addressRegion || '';
+            country = jsonLd.address.addressCountry || '';
+          }
+          if (!city) {
+            const m = title.match(/\bin\s+([\w\s]+?)(?:,\s*([\w\s]+))?$/i);
+            if (m) { city = m[1]?.trim() || ''; country = m[2]?.trim() || ''; }
+          }
+          const st = `${description} ${title}`;
+          if (!bedrooms)  { const m = st.match(/(\d+)\s*bed(?:room)?s?/i);        if (m) bedrooms  = m[1]; }
+          if (!bathrooms) { const m = st.match(/(\d+(?:\.\d+)?)\s*bath(?:room)?s?/i); if (m) bathrooms = m[1]; }
+          if (!maxGuests) { const m = st.match(/(\d+)\s*guests?/i);               if (m) maxGuests = m[1]; }
+          propertyType = detectType(`${title} ${description}`);
+          amenities    = detectAmenities(`${description} ${html.substring(0, 60000)}`);
         }
       }
 
-      // ── Extract fields ────────────────────────────────────────────────────
-      let city    = jsonLd?.address?.addressLocality || jsonLd?.address?.addressRegion || '';
-      let country = jsonLd?.address?.addressCountry || '';
-      let address = jsonLd?.address?.streetAddress || '';
-
-      if (embeddedData) {
-        city    = city    || embeddedData.city || embeddedData.public_address || '';
-        country = country || embeddedData.country_name || embeddedData.country || '';
-        address = address || embeddedData.public_address || '';
+      // ── All methods done — check we got something ─────────────────────────
+      if (!title && !description && images.length === 0) {
+        throw new Error(
+          'All 3 extraction methods failed. Airbnb is actively blocking automated access for this listing.\n' +
+          'Please click "Add Property" and fill in the details manually.'
+        );
       }
-
-      if (!city) {
-        const m = title.match(/\bin\s+([\w\s]+?)(?:,\s*([\w\s]+))?$/i);
-        if (m) { city = m[1]?.trim() || ''; country = m[2]?.trim() || ''; }
-      }
-
-      let bedrooms  = jsonLd?.numberOfRooms ? String(jsonLd.numberOfRooms) : String(embeddedData?.bedrooms || '');
-      let bathrooms = String(embeddedData?.bathrooms || '');
-      let maxGuests = String(embeddedData?.person_capacity || embeddedData?.guests_included || '');
-
-      const searchText = `${description} ${title}`;
-      if (!bedrooms)  { const m = searchText.match(/(\d+)\s*bed(?:room)?s?/i);            if (m) bedrooms  = m[1]; }
-      if (!bathrooms) { const m = searchText.match(/(\d+(?:\.\d+)?)\s*bath(?:room)?s?/i); if (m) bathrooms = m[1]; }
-      if (!maxGuests) { const m = searchText.match(/(\d+)\s*guests?/i);                   if (m) maxGuests = m[1]; }
-
-      let pricePerNight = '';
-      const priceMeta = getOg('product:price:amount') || getOg('price');
-      if (priceMeta) pricePerNight = String(Math.round(parseFloat(priceMeta)));
-      if (!pricePerNight && embeddedData?.price) pricePerNight = String(Math.round(parseFloat(String(embeddedData.price))));
-      if (!pricePerNight) {
-        const m = html.match(/"price"\s*:\s*"?([\d.]+)"?/);
-        if (m) pricePerNight = String(Math.round(parseFloat(m[1])));
-      }
-
-      const lower = `${title} ${description}`.toLowerCase();
-      let propertyType = 'apartment';
-      if (/\bvilla\b/.test(lower))              propertyType = 'villa';
-      else if (/\bcabin\b/.test(lower))         propertyType = 'cabin';
-      else if (/\bcottage\b/.test(lower))       propertyType = 'cottage';
-      else if (/\bhouse\b|\bhome\b/.test(lower)) propertyType = 'house';
-      else if (/\bcondo\b/.test(lower))         propertyType = 'condo';
-
-      const amenities: string[] = [];
-      const amenityMap: Record<string, string> = {
-        wifi: 'WiFi', pool: 'Pool', 'air condition': 'Air Conditioning',
-        'hot tub': 'Hot Tub', kitchen: 'Kitchen', fireplace: 'Fireplace',
-        gym: 'Gym', parking: 'Parking', beach: 'Beach View',
-        'pet': 'Pet Friendly', balcony: 'Balcony', elevator: 'Elevator'
-      };
-      const scanText = lower + ' ' + html.substring(0, 80000).toLowerCase();
-      Object.entries(amenityMap).forEach(([kw, label]) => {
-        if (scanText.includes(kw)) amenities.push(label);
-      });
 
       setImportPreview({
         title:         title || 'Imported Airbnb Listing',
-        description,
-        city,
-        country,
-        address,
-        bedrooms:      String(bedrooms  || '1'),
-        bathrooms:     String(bathrooms || '1'),
-        maxGuests:     String(maxGuests || '2'),
+        description:   description.substring(0, 1000),
+        city, country, address,
+        bedrooms:      bedrooms  || '1',
+        bathrooms:     bathrooms || '1',
+        maxGuests:     maxGuests || '2',
         pricePerNight: pricePerNight || '',
         propertyType,
         images:        images.slice(0, 8),
@@ -389,9 +443,9 @@ export const Properties: React.FC = () => {
 
     } catch (err: any) {
       console.error('Airbnb scrape error:', err);
-      const msg = err.message || 'Failed to fetch listing data.';
-      setImportError(err.name === 'AbortError' || msg.includes('AbortError')
-        ? 'Request timed out. Airbnb may be slow. Please try again.'
+      const msg = (err.message || 'Failed to fetch listing data.').replace('AbortError: ', '');
+      setImportError(err.name === 'AbortError' || msg.toLowerCase().includes('abort')
+        ? 'Request timed out. Please try again in a few seconds.'
         : msg
       );
     } finally {
